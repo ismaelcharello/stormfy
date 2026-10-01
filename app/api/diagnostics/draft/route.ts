@@ -93,7 +93,21 @@ export async function POST(request: Request) {
       console.error("meeting-minutes-ai", { status: upstream.status, code: failure.error?.code, type: failure.error?.type, message: failure.error?.message?.slice(0,500) });
       if (upstream.status === 400) upstream = await callOpenAI(false);
       else if (upstream.status === 401 || upstream.status === 403) return Response.json({ error: "A análise por IA precisa ser reconectada. O arquivo continua nesta tela para você não perder o conteúdo." }, { status: 503 });
-      else if (upstream.status === 429) return Response.json({ error: "A análise por IA atingiu o limite de uso agora. Aguarde alguns minutos e tente novamente; o arquivo continua nesta tela." }, { status: 503 });
+      else if (upstream.status === 429) {
+        const code = failure.error?.code || "";
+        const type = failure.error?.type || "";
+        const billingOrQuotaCodes = new Set([
+          "credit_balance_exhausted",
+          "organization_spend_limit_exceeded",
+          "project_spend_limit_exceeded",
+          "organization_usage_limit_exceeded",
+        ]);
+        if (billingOrQuotaCodes.has(code) || type === "insufficient_quota") {
+          return Response.json({ error: "A análise por IA está sem créditos ou atingiu o limite de gastos da conta OpenAI. Abra platform.openai.com/settings/organization/billing, adicione créditos ou aumente o limite e tente novamente. O arquivo continua nesta tela." }, { status: 503 });
+        }
+        const retryAfter = upstream.headers.get("retry-after");
+        return Response.json({ error: retryAfter ? `A análise por IA está recebendo muitas solicitações. Tente novamente em cerca de ${retryAfter} segundos; o arquivo continua nesta tela.` : "A análise por IA está recebendo muitas solicitações. Aguarde alguns minutos e tente novamente; o arquivo continua nesta tela." }, { status: 503 });
+      }
     }
     if (!upstream.ok) {
       const failure = await upstream.json().catch(() => ({})) as { error?: { code?: string; type?: string; message?: string } };
