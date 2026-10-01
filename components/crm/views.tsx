@@ -1,236 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { Activity, Archive, BadgeCheck, BarChart3, Building2, CalendarClock, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, ExternalLink, FilePenLine, LoaderCircle, MessageCircle, Pencil, Plus, Target, Trash2, UserPlus, Users } from "lucide-react";
-import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Archive, BadgeCheck, Building2, CalendarClock, CalendarDays, Check, ChevronLeft, ChevronRight, ExternalLink, FilePenLine, LoaderCircle, MessageCircle, Pencil, Plus, Target, UserPlus, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Field } from "@/components/crm/field";
-import { stages, type BoardActivity, type Company, type CompanyDiagnostic, type Contact, type Interaction, type Opportunity, type Task, type View, type Workspace } from "@/lib/crm-types";
-import { currency, formatDate, initials, labelForTask, taskIsLate } from "@/lib/crm-utils";
+import { stages, type Company, type CompanyDiagnostic, type Contact, type Interaction, type Opportunity, type Task, type Workspace } from "@/lib/crm-types";
+import { opportunityContext } from "@/lib/crm-insights";
+import { currency, formatDate, labelForTask, taskIsLate } from "@/lib/crm-utils";
 
-function MetricCard({ label, value, detail, icon: Icon, tone = "violet", onClick }: { label: string; value: string | number; detail: string; icon: typeof Users; tone?: "violet" | "blue" | "amber" | "green" | "rose"; onClick: () => void }) {
-  const tones = {
-    violet: "bg-[#f6f0e3] text-[#173052]",
-    blue: "bg-blue-50 text-blue-700",
-    amber: "bg-amber-50 text-amber-700",
-    green: "bg-emerald-50 text-emerald-700",
-    rose: "bg-rose-50 text-rose-700",
-  };
-  return <button type="button" onClick={onClick} className="rounded-xl border border-slate-200 bg-white p-5 text-left shadow-sm shadow-slate-900/[0.02] transition hover:border-[#d2ba84] focus-visible:outline-2 focus-visible:outline-[#a8864b]">
-    <div className="flex items-start justify-between gap-3">
-      <div><p className="text-sm font-medium text-slate-500">{label}</p><p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">{value}</p></div>
-      <span className={`grid size-10 place-items-center rounded-lg ${tones[tone]}`}><Icon className="size-5" /></span>
-    </div>
-    <p className="mt-3 text-sm text-slate-500">{detail}</p>
-  </button>;
-}
-
-type DashboardPeriod = "today" | "7d" | "30d" | "all";
-
-function inDashboardPeriod(value: string, period: DashboardPeriod) {
-  if (period === "all") return true;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return false;
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  if (period === "7d") start.setDate(start.getDate() - 6);
-  if (period === "30d") start.setDate(start.getDate() - 29);
-  return date.getTime() >= start.getTime();
-}
-
-function commercialTrend(opportunities: Opportunity[], period: DashboardPeriod) {
-  const now = new Date();
-  const buckets: { label: string; start: Date; end: Date }[] = [];
-  if (period === "today") {
-    const start = new Date(now); start.setHours(0, 0, 0, 0);
-    for (let hour = 0; hour < 24; hour += 4) {
-      const bucketStart = new Date(start); bucketStart.setHours(hour);
-      const bucketEnd = new Date(start); bucketEnd.setHours(hour + 4);
-      buckets.push({ label: `${String(hour).padStart(2, "0")}h`, start: bucketStart, end: bucketEnd });
-    }
-  } else if (period === "7d") {
-    for (let offset = 6; offset >= 0; offset -= 1) {
-      const start = new Date(now); start.setDate(start.getDate() - offset); start.setHours(0, 0, 0, 0);
-      const end = new Date(start); end.setDate(end.getDate() + 1);
-      buckets.push({ label: start.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }), start, end });
-    }
-  } else if (period === "30d") {
-    for (let offset = 25; offset >= 0; offset -= 5) {
-      const start = new Date(now); start.setDate(start.getDate() - offset); start.setHours(0, 0, 0, 0);
-      const end = new Date(start); end.setDate(end.getDate() + 5);
-      buckets.push({ label: start.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }), start, end });
-    }
-  } else {
-    const validDates = opportunities.map((item) => new Date(item.created_at)).filter((date) => !Number.isNaN(date.getTime()));
-    const first = validDates.length ? new Date(Math.min(...validDates.map((date) => date.getTime()))) : new Date(now);
-    const startMonth = new Date(first.getFullYear(), first.getMonth(), 1);
-    const totalMonths = Math.max(1, (now.getFullYear() - startMonth.getFullYear()) * 12 + now.getMonth() - startMonth.getMonth() + 1);
-    const bucketMonths = Math.max(1, Math.ceil(totalMonths / 6));
-    for (let cursor = new Date(startMonth); cursor <= now; cursor = new Date(cursor.getFullYear(), cursor.getMonth() + bucketMonths, 1)) {
-      const end = new Date(cursor.getFullYear(), cursor.getMonth() + bucketMonths, 1);
-      buckets.push({ label: cursor.toLocaleDateString("pt-BR", { month: "short", year: totalMonths > 12 ? "2-digit" : undefined }), start: new Date(cursor), end });
-    }
-  }
-  return buckets.slice(-7).map((bucket) => {
-    const items = opportunities.filter((item) => { const date = new Date(item.created_at); return date >= bucket.start && date < bucket.end; });
-    return { periodo: bucket.label.replace(".", ""), criadas: items.length, ganhas: items.filter((item) => item.stage === "Ganho").length, valor: items.reduce((sum, item) => sum + Number(item.amount || 0), 0) };
-  });
-}
-
-export function DashboardView({ contacts, companies, opportunities, tasks, interactions, activities, diagnostics, onView, onCreateTask, onCreateMeeting, onCreateActivity, onCreateCompany, onCreateDiagnostic, onCompanyDetail, onCompleteTask, onCreateOpportunity, onCreateContact, onCreateInteraction, onContactDetail, onOpportunityDetail, onOpenStage }: {
-  contacts: Contact[]; companies: Company[]; opportunities: Opportunity[]; tasks: Task[]; interactions: Interaction[]; activities: BoardActivity[]; diagnostics: CompanyDiagnostic[];
-  onView: (view: View) => void; onCreateTask: () => void; onCompleteTask: (id: string) => void; onCreateOpportunity: () => void; onCreateContact: () => void;
-  onCreateCompany: () => void; onCreateMeeting: () => void; onCreateActivity: () => void; onCreateDiagnostic: () => void; onCompanyDetail: (id: string) => void;
-  onCreateInteraction: () => void; onContactDetail: (id: string) => void; onOpportunityDetail: (id: string) => void; onOpenStage: (stage: string) => void;
-}) {
-  const [period, setPeriod] = useState<DashboardPeriod>("all");
-  const [responsible, setResponsible] = useState("all");
-  const [showAllContacts, setShowAllContacts] = useState(false);
-  const companyMap = new Map(companies.map((company) => [company.id, company]));
-  const contactMap = new Map(contacts.map((contact) => [contact.id, contact]));
-  const opportunityMap = new Map(opportunities.map((opportunity) => [opportunity.id, opportunity]));
-  const assignees = [...new Set([
-    "Ismael Charello",
-    "Rudy Mendonça",
-    ...[...contacts, ...opportunities, ...tasks, ...activities]
-      .map((item) => item.assigned_to?.trim())
-      .filter((value): value is string => Boolean(value)),
-  ])].sort((a, b) => a.localeCompare(b, "pt-BR"));
-  const matchesResponsible = (value?: string | null) => responsible === "all" || (responsible === "__unassigned" ? !value : value === responsible);
-  const interactionResponsible = (interaction: Interaction) => opportunityMap.get(interaction.opportunity_id || "")?.assigned_to || contactMap.get(interaction.contact_id || "")?.assigned_to || null;
-  const filteredContacts = contacts.filter((item) => !item.archived_at && inDashboardPeriod(item.created_at, period) && matchesResponsible(item.assigned_to));
-  const filteredOpportunities = opportunities.filter((item) => inDashboardPeriod(item.created_at, period) && matchesResponsible(item.assigned_to));
-  const filteredTasks = tasks.filter((item) => inDashboardPeriod(item.due_at, period) && matchesResponsible(item.assigned_to));
-  const filteredInteractions = interactions.filter((item) => inDashboardPeriod(item.occurred_at, period) && matchesResponsible(interactionResponsible(item)));
-  const currentContacts = contacts.filter((item) => !item.archived_at && matchesResponsible(item.assigned_to));
-  const currentOpenOpportunities = opportunities.filter((item) => !item.is_draft && item.stage !== "Ganho" && item.stage !== "Perdido" && matchesResponsible(item.assigned_to));
-  const currentPendingTasks = tasks.filter((item) => item.status === "Pendente" && matchesResponsible(item.assigned_to));
-  const currentLateTasks = currentPendingTasks.filter(taskIsLate);
-  const pendingTasks = filteredTasks.filter((item) => item.status === "Pendente");
-  const todayTasks = tasks.filter((item) => item.status === "Pendente" && new Date(item.due_at).toDateString() === new Date().toDateString() && matchesResponsible(item.assigned_to));
-  const upcomingMeetings = tasks.filter((item) => item.kind === "Reunião" && item.status === "Pendente" && item.meeting_status !== "Rascunho" && item.meeting_status !== "Cancelada" && new Date(item.due_at) >= new Date() && matchesResponsible(item.assigned_to)).sort((a,b) => new Date(a.due_at).getTime()-new Date(b.due_at).getTime());
-  const activeTasks = [...pendingTasks].sort((a, b) => new Date(a.due_at).getTime() - new Date(b.due_at).getTime()).slice(0, 6);
-  const filteredCompanyIds = new Set((responsible === "all" ? contacts : contacts.filter((item) => matchesResponsible(item.assigned_to))).map((item) => item.company_id).filter(Boolean));
-  const visibleCompanies = (responsible === "all" ? companies : companies.filter((item) => filteredCompanyIds.has(item.id))).filter((item) => !item.archived_at);
-  const stagesSummary = stages.map((stage) => {
-    const items = filteredOpportunities.filter((item) => !item.is_draft && item.stage === stage);
-    return { stage, count: items.length, amount: items.reduce((sum, item) => sum + Number(item.amount || 0), 0) };
-  });
-  const periodLabel = { today: "Hoje", "7d": "Últimos 7 dias", "30d": "Últimos 30 dias", all: "Todo o período" }[period];
-  const responsibleLabel = responsible === "all" ? "Toda a equipe" : responsible === "__unassigned" ? "Sem responsável" : responsible;
-  const hasAnyData = contacts.length + companies.length + opportunities.length + tasks.length + interactions.length > 0;
-  const hasFilteredData = filteredContacts.length + filteredOpportunities.length + filteredTasks.length + filteredInteractions.length > 0;
-  const trend = commercialTrend(filteredOpportunities.filter((item) => !item.is_draft), period);
-  const completedDiagnostics = diagnostics.filter((item) => item.status === "completed" && matchesResponsible(item.responsible));
-  const periodDiagnostics = completedDiagnostics.filter((item) => inDashboardPeriod(item.visit_at, period));
-  const visitedIds = new Set(completedDiagnostics.map((item) => item.company_id));
-  const diagnosisFor = (companyId: string) => completedDiagnostics.filter((item) => item.company_id === companyId)
-    .sort((a,b) => new Date(b.visit_at).getTime() - new Date(a.visit_at).getTime())[0];
-  const attentionReason = (company: Company) => {
-    const diagnosis = diagnosisFor(company.id);
-    if (!diagnosis) return null;
-    const pending = tasks.filter((item) => item.status === "Pendente" && !item.archived_at &&
-      (item.company_id === company.id || contacts.some((c) => c.company_id === company.id && c.id === item.contact_id)));
-    if (pending.some(taskIsLate)) return "Follow-up atrasado";
-    if (!pending.length) return "Sem retorno agendado";
-    const openDeal = opportunities.find((item) => item.company_id === company.id && !item.is_draft && !["Ganho","Perdido"].includes(item.stage) &&
-      !tasks.some((task) => task.status === "Pendente" && task.opportunity_id === item.id));
-    if (openDeal) return "Oportunidade sem tarefa vinculada";
-    if (diagnosis.potential === "Alto" && !pending.some((item) => item.kind === "Reunião" && item.meeting_status === "Agendada")) return "Potencial alto sem reunião marcada";
-    if (inDashboardPeriod(diagnosis.visit_at,"7d")) return "Visita recente";
-    return null;
-  };
-  const attentionCompanies = companies.filter((company) => Boolean(attentionReason(company)))
-    .sort((a,b) => new Date(diagnosisFor(b.id).visit_at).getTime() - new Date(diagnosisFor(a.id).visit_at).getTime());
-  const summaryAssignees = [...assignees, "__unassigned"].map((name) => {
-    const assigned = (value?: string | null) => name === "__unassigned" ? !value : value === name;
-    const ownerContacts = contacts.filter((item) => assigned(item.assigned_to));
-    const ownerOpportunities = opportunities.filter((item) => !item.is_draft && assigned(item.assigned_to) && item.stage !== "Ganho" && item.stage !== "Perdido");
-    const ownerTasks = tasks.filter((item) => assigned(item.assigned_to) && item.status === "Pendente");
-    const ownerMeetings = tasks.filter((item) => assigned(item.assigned_to) && item.kind === "Reunião" && item.status === "Pendente" && item.meeting_status === "Agendada");
-    const ownerActivities = activities.filter((item) => assigned(item.assigned_to) && item.status === "published");
-    return { name, contacts: ownerContacts.length, opportunities: ownerOpportunities.length, amount: ownerOpportunities.reduce((sum, item) => sum + Number(item.amount || 0), 0), tasks: ownerTasks.length, meetings: ownerMeetings.length, activities: ownerActivities.length };
-  });
-
-  return <div className="space-y-6">
-    <section className="space-y-5 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-      <div className="grid max-w-2xl gap-3 sm:grid-cols-2">
-        <Field label="Período"><NativeSelect value={period} onChange={(event) => setPeriod(event.target.value as DashboardPeriod)}><option value="today">Hoje</option><option value="7d">Últimos 7 dias</option><option value="30d">Últimos 30 dias</option><option value="all">Todo o período</option></NativeSelect></Field>
-        <Field label="Responsável"><NativeSelect value={responsible} onChange={(event) => setResponsible(event.target.value)}><option value="all">Todos</option>{assignees.map((name) => <option key={name} value={name}>{name}</option>)}<option value="__unassigned">Sem responsável</option></NativeSelect></Field>
-      </div>
-      <div>
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Ações rápidas</p>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-8 [&>button]:min-w-0 [&>button]:justify-start [&>button]:px-3"><Button variant="outline" onClick={onCreateContact}><Users className="size-4 shrink-0 text-[#173052]" /><span className="truncate">Novo contato</span></Button><Button variant="outline" onClick={onCreateCompany}><Building2 className="size-4 shrink-0 text-[#173052]" /><span className="truncate">Nova empresa</span></Button><Button variant="outline" onClick={onCreateOpportunity}><Target className="size-4 shrink-0 text-[#173052]" /><span className="truncate">Nova oportunidade</span></Button><Button variant="outline" onClick={onCreateMeeting}><CalendarDays className="size-4 shrink-0 text-[#173052]" /><span className="truncate">Reunião</span></Button><Button variant="outline" onClick={onCreateTask}><CalendarClock className="size-4 shrink-0 text-[#173052]" /><span className="truncate">Follow-up</span></Button><Button variant="outline" onClick={onCreateActivity}><Activity className="size-4 shrink-0 text-[#173052]" /><span className="truncate">Nova atividade</span></Button><Button variant="outline" onClick={onCreateDiagnostic}><FilePenLine className="size-4 shrink-0 text-[#173052]" /><span className="truncate">Registrar visita</span></Button><Button className="bg-[#173052] text-white hover:bg-[#10233f]" onClick={onCreateInteraction}><Activity className="size-4 shrink-0" /><span className="truncate">Interação</span></Button></div>
-      </div>
-    </section>
-
-    {!hasAnyData ? <section className="rounded-xl border border-slate-200 bg-white"><EmptyState icon={Target} title="Comece sua operação comercial" detail="Cadastre um contato ou uma oportunidade para acompanhar o funil e os próximos passos." action="Novo contato" onClick={onCreateContact} /></section> : !hasFilteredData && period !== "all" ? <section className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center"><h2 className="font-semibold text-slate-900">Nenhum resultado neste período</h2><p className="mt-2 text-sm text-slate-500">Ajuste o período ou o responsável para visualizar outros registros.</p><Button variant="outline" className="mt-4" onClick={() => { setPeriod("all"); setResponsible("all"); }}>Limpar filtros</Button></section> : null}
-
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <MetricCard label="Contatos ativos" value={currentContacts.length} detail={`Total atual · ${responsibleLabel}`} icon={Users} tone="violet" onClick={() => onView("contacts")} />
-      <MetricCard label="Empresas ativas" value={visibleCompanies.length} detail={responsible === "all" ? "Total atual da carteira" : `Relacionadas a ${responsibleLabel}`} icon={Building2} tone="blue" onClick={() => onView("companies")} />
-      <MetricCard label="Oportunidades abertas" value={currentOpenOpportunities.length} detail={`Total atual · ${responsibleLabel}`} icon={Target} tone="blue" onClick={() => onView("pipeline")} />
-      <MetricCard label="Valor do funil" value={currency(currentOpenOpportunities.reduce((sum, item) => sum + Number(item.amount || 0), 0))} detail="Total atual das oportunidades abertas" icon={Target} tone="green" onClick={() => onView("pipeline")} />
-      <MetricCard label="Follow-ups pendentes" value={currentPendingTasks.length} detail={`Total atual · ${responsibleLabel}`} icon={CalendarClock} tone="violet" onClick={() => onView("tasks")} />
-      <MetricCard label="Tarefas atrasadas" value={currentLateTasks.length} detail={currentLateTasks.length ? "Total atual · precisam de atenção" : "Total atual · nenhuma tarefa vencida"} icon={Clock3} tone={currentLateTasks.length ? "rose" : "green"} onClick={() => onView("tasks")} />
-      <MetricCard label="Atividades previstas para hoje" value={todayTasks.length} detail={`${responsibleLabel} · total atual`} icon={CalendarClock} tone="amber" onClick={() => onView("tasks")} />
-      <MetricCard label="Reuniões agendadas" value={upcomingMeetings.length} detail="Próximas reuniões confirmadas" icon={CalendarDays} tone="blue" onClick={() => onView("calendar")} />
-    </div>
-
-    <section className="space-y-3"><div><h2 className="font-semibold text-[#173052]">Visitas e diagnósticos</h2><p className="text-sm text-slate-600">Registros concluídos no período · {periodLabel.toLowerCase()}</p></div>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Empresas visitadas" value={new Set(periodDiagnostics.map((item) => item.company_id)).size} detail="No período selecionado" icon={Building2} onClick={() => onView("companies")} />
-        <MetricCard label="Diagnósticos realizados" value={periodDiagnostics.length} detail="No período selecionado" icon={FilePenLine} onClick={() => onView("companies")} />
-        <MetricCard label="Oportunidades identificadas" value={periodDiagnostics.reduce((total,item) => total + item.ideas.length,0)} detail="Ideias registradas nas visitas" icon={Target} onClick={() => onView("companies")} />
-        <MetricCard label="Potencial alto" value={periodDiagnostics.filter((item) => item.potential === "Alto").length} detail="Diagnósticos no período" icon={BadgeCheck} onClick={() => onView("companies")} />
-        <MetricCard label="Visitas presenciais" value={periodDiagnostics.filter((item) => item.visit_kind === "Visita presencial").length} detail="No período selecionado" icon={Users} onClick={() => onView("companies")} />
-        <MetricCard label="Sem próximo follow-up" value={attentionCompanies.filter((company) => !tasks.some((task) => task.status === "Pendente" && (task.company_id === company.id || contacts.some((c) => c.company_id === company.id && c.id === task.contact_id)))).length} detail="Empresas já visitadas · total atual" icon={CalendarClock} tone="amber" onClick={() => onView("companies")} />
-        <MetricCard label="Follow-ups atrasados" value={currentLateTasks.length} detail="Total atual" icon={Clock3} tone="rose" onClick={() => onView("tasks")} />
-        <MetricCard label="Empresas com diagnóstico" value={visitedIds.size} detail="Total atual" icon={Check} onClick={() => onView("companies")} />
-      </div>
-      <div className="rounded-xl border border-slate-200 bg-white p-5"><h3 className="font-semibold text-[#173052]">Empresas que precisam de atenção</h3>{attentionCompanies.length ? <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{attentionCompanies.slice(0,9).map((company) => <button type="button" key={company.id} onClick={() => onCompanyDetail(company.id)} className="rounded-lg border border-[#eadbb9] bg-[#fffdfa] p-3 text-left hover:border-[#a8864b]"><strong className="text-sm text-[#173052]">{company.name}</strong><p className="mt-1 text-sm text-slate-600">{attentionReason(company)}</p></button>)}</div> : <p className="mt-2 text-sm text-slate-600">Nenhuma empresa visitada precisa de ação neste momento.</p>}</div>
-      {periodDiagnostics.length > 0 && <div className="rounded-xl border border-slate-200 bg-white p-5"><h3 className="font-semibold text-[#173052]">Diagnósticos por responsável</h3><div className="mt-3 flex flex-wrap gap-2">{[...new Set(periodDiagnostics.map((item) => item.responsible || "Sem responsável"))].map((name) => <Badge key={name} variant="secondary" className="p-2 text-sm">{name}: {periodDiagnostics.filter((item) => (item.responsible || "Sem responsável") === name).length}</Badge>)}</div></div>}
-    </section>
-
-    <section className="rounded-xl border border-slate-200 bg-white shadow-sm shadow-slate-900/[0.02]">
-      <div className="border-b border-slate-100 px-5 py-4"><h2 className="font-semibold text-slate-900">Evolução comercial</h2><p className="mt-1 text-sm text-slate-500">Oportunidades criadas, ganhas e valor estimado · {periodLabel.toLowerCase()}</p></div>
-      {filteredOpportunities.filter((item) => !item.is_draft).length === 0 ? <EmptyState icon={BarChart3} title="Sem dados comerciais neste filtro" detail="O gráfico será preenchido quando houver oportunidades publicadas no período selecionado." action="Nova oportunidade" onClick={onCreateOpportunity} /> : <div className="h-[310px] w-full p-4 sm:p-5" role="img" aria-label="Gráfico de evolução comercial com oportunidades criadas, ganhas e valor estimado"><ResponsiveContainer width="100%" height="100%"><ComposedChart data={trend} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" /><XAxis dataKey="periodo" tick={{ fill: "#64748b", fontSize: 12 }} axisLine={false} tickLine={false} /><YAxis yAxisId="count" allowDecimals={false} tick={{ fill: "#64748b", fontSize: 12 }} axisLine={false} tickLine={false} /><YAxis yAxisId="amount" orientation="right" tickFormatter={(value) => `R$ ${Number(value) >= 1000 ? `${Math.round(Number(value) / 1000)}k` : Number(value)}`} tick={{ fill: "#64748b", fontSize: 12 }} axisLine={false} tickLine={false} /><Tooltip contentStyle={{ borderRadius: 10, borderColor: "#ded8cb", boxShadow: "0 10px 30px rgba(16,35,63,.08)" }} formatter={(value, name) => [name === "Valor estimado" ? currency(Number(value)) : Number(value), name]} /><Legend wrapperStyle={{ fontSize: 12 }} /><Bar yAxisId="count" dataKey="criadas" name="Criadas" fill="#173052" radius={[5,5,0,0]} /><Bar yAxisId="count" dataKey="ganhas" name="Ganhas" fill="#c6a96b" radius={[5,5,0,0]} /><Line yAxisId="amount" type="monotone" dataKey="valor" name="Valor estimado" stroke="#315477" strokeWidth={2.5} dot={{ r: 3, fill: "#315477" }} /></ComposedChart></ResponsiveContainer></div>}
-    </section>
-
-    <section className="rounded-xl border border-slate-200 bg-white shadow-sm"><div className="flex items-center justify-between border-b border-slate-100 px-5 py-4"><h2 className="font-semibold text-slate-900">Próximas reuniões</h2><Button variant="ghost" onClick={() => onView("calendar")}>Abrir calendário <ChevronRight className="size-4" /></Button></div>{upcomingMeetings.length ? <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">{upcomingMeetings.slice(0,6).map((meeting) => <button key={meeting.id} type="button" onClick={() => onView("calendar")} className="rounded-lg border border-[#eadbb9] bg-[#fffdfa] p-4 text-left hover:border-[#a8864b]"><p className="font-medium text-[#10233f]">{meeting.title}</p><p className="mt-2 text-sm text-slate-600">{formatDate(meeting.due_at,true)} · {meeting.assigned_to || "Sem responsável"}</p><p className="mt-1 text-sm text-slate-500">{meeting.location || contacts.find((x) => x.id === meeting.contact_id)?.name || "Local a definir"}</p></button>)}</div> : <p className="p-5 text-sm text-slate-500">Nenhuma reunião futura agendada.</p>}</section>
-
-    <div className="grid gap-6 xl:grid-cols-[1.3fr_0.9fr]">
-      <section className="rounded-xl border border-slate-200 bg-white shadow-sm shadow-slate-900/[0.02]">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4"><div><h2 className="font-semibold text-slate-900">Funil de oportunidades</h2><p className="mt-1 text-sm text-slate-500">Quantidade e valor por etapa · {periodLabel.toLowerCase()}</p></div><Button variant="ghost" className="text-sm text-[#173052] hover:text-[#0b1a31]" onClick={() => onView("pipeline")}>Abrir funil <ChevronRight className="size-4" /></Button></div>
-        {filteredOpportunities.filter((item) => !item.is_draft).length === 0 ? <EmptyState icon={Target} title="Nenhuma oportunidade publicada no filtro" detail="Cadastre uma oportunidade, publique um rascunho ou amplie o período selecionado." action="Nova oportunidade" onClick={onCreateOpportunity} /> : <div className="grid gap-3 p-5 sm:grid-cols-2 xl:grid-cols-4">{stagesSummary.map(({ stage, count, amount }) => { const finalStage = stage === "Ganho" || stage === "Perdido"; return <button type="button" key={stage} onClick={() => onOpenStage(stage)} className={`rounded-lg border p-4 text-left transition hover:border-[#d2ba84] focus-visible:outline-2 focus-visible:outline-[#a8864b] ${stage === "Ganho" ? "border-emerald-200 bg-emerald-50/60" : stage === "Perdido" ? "border-slate-200 bg-slate-100" : "border-slate-100 bg-slate-50/70"}`}><div className="flex items-center justify-between gap-2"><span className="truncate text-sm font-medium text-slate-700">{stage}</span><Badge variant="secondary" className={finalStage ? "bg-white/80" : "bg-white text-slate-600"}>{count}</Badge></div><p className="mt-3 text-sm font-semibold text-slate-900">{currency(amount)}</p><p className="mt-1 text-xs text-slate-500">{count} oportunidade{count === 1 ? "" : "s"}</p></button>; })}</div>}
-      </section>
-      <section className="rounded-xl border border-slate-200 bg-white shadow-sm shadow-slate-900/[0.02]">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4"><div><h2 className="font-semibold text-slate-900">Próximos follow-ups</h2><p className="mt-1 text-sm text-slate-500">Atrasados primeiro, depois os próximos</p></div><Button variant="ghost" size="icon" aria-label="Agendar follow-up" onClick={onCreateTask}><Plus className="size-4 text-[#173052]" /></Button></div>
-        {activeTasks.length === 0 ? <EmptyState icon={CalendarClock} title="Nenhum follow-up no filtro" detail="Agende o próximo contato ou amplie o período selecionado." action="Agendar follow-up" onClick={onCreateTask} /> : <div className="divide-y divide-slate-100">{activeTasks.map((task) => { const contact = contactMap.get(task.contact_id || ""); const opportunity = opportunityMap.get(task.opportunity_id || ""); const company = companyMap.get(task.company_id || ""); const late = taskIsLate(task); return <div key={task.id} className="flex flex-wrap items-start gap-3 px-5 py-4"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="text-sm font-medium text-slate-800">{task.title}</p><Badge variant="secondary" className={late ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-600"}>{late ? "Atrasada" : task.priority}</Badge></div>{(opportunity || contact || company) && <button type="button" onClick={() => opportunity ? onOpportunityDetail(opportunity.id) : contact ? onContactDetail(contact.id) : company && onCompanyDetail(company.id)} className="mt-1 text-left text-sm text-[#173052] hover:underline">{opportunity?.title || contact?.name || company?.name}</button>}<div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500"><span className={late ? "font-semibold text-rose-700" : ""}>{formatDate(task.due_at, true)}</span><span>{task.assigned_to || "Sem responsável"}</span><span>{task.kind}</span></div></div><Button size="sm" variant="outline" onClick={() => onCompleteTask(task.id)}>{!task.contact_id && !task.opportunity_id ? "Concluir" : "Registrar resultado"}</Button></div>; })}</div>}
-      </section>
-    </div>
-
-    <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-      <section className="rounded-xl border border-slate-200 bg-white shadow-sm shadow-slate-900/[0.02]">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-4"><div><h2 className="font-semibold text-slate-900">Contatos recentes</h2><p className="mt-1 text-sm text-slate-500">{showAllContacts ? `Mostrando todos os ${filteredContacts.length} contatos do filtro` : `Mostrando até 6 de ${filteredContacts.length} contatos do filtro`}</p></div><div className="flex flex-wrap items-center gap-1">{filteredContacts.length > 6 && <Button variant="ghost" className="text-sm text-[#173052]" onClick={() => setShowAllContacts((current) => !current)}>{showAllContacts ? "Mostrar recentes" : `Ver todos (${filteredContacts.length})`}</Button>}<Button variant="ghost" className="text-sm text-[#173052]" onClick={() => onView("contacts")}>Abrir carteira <ChevronRight className="size-4" /></Button></div></div>
-        {filteredContacts.length === 0 ? <EmptyState icon={Users} title="Nenhum contato no filtro" detail="Adicione uma pessoa ou amplie o período selecionado." action="Novo contato" onClick={onCreateContact} /> : <div className={`divide-y divide-slate-100 ${showAllContacts ? "max-h-[640px] overflow-y-auto" : ""}`}>{filteredContacts.slice(0, showAllContacts ? filteredContacts.length : 6).map((contact) => <button type="button" key={contact.id} onClick={() => onContactDetail(contact.id)} className="flex w-full items-center gap-3 px-5 py-3.5 text-left hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-[#a8864b]"><Avatar className="size-9"><AvatarFallback className="bg-[#f6f0e3] text-xs font-semibold text-[#173052]">{initials(contact.name)}</AvatarFallback></Avatar><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-slate-800">{contact.name}</p><p className="truncate text-xs text-slate-500">{companyMap.get(contact.company_id || "")?.name || "Empresa não informada"} · {contact.assigned_to || "Sem responsável"}</p></div><span className="hidden text-xs text-slate-400 sm:block">{formatDate(contact.created_at)}</span></button>)}</div>}
-      </section>
-      <section className="rounded-xl border border-slate-200 bg-white shadow-sm shadow-slate-900/[0.02]">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4"><div><h2 className="font-semibold text-slate-900">Atividades recentes</h2><p className="mt-1 text-sm text-slate-500">Conversas e reuniões registradas</p></div><Button variant="ghost" size="icon" aria-label="Registrar interação" onClick={onCreateInteraction}><Plus className="size-4 text-[#173052]" /></Button></div>
-        {filteredInteractions.length === 0 ? <EmptyState icon={Activity} title="Nenhuma atividade no filtro" detail="Registre uma conversa ou amplie o período selecionado." action="Registrar interação" onClick={onCreateInteraction} /> : <div className="divide-y divide-slate-100">{filteredInteractions.slice(0, 6).map((interaction) => { const contact = contactMap.get(interaction.contact_id || ""); const opportunity = opportunityMap.get(interaction.opportunity_id || ""); const assigned = interactionResponsible(interaction); return <button type="button" key={interaction.id} onClick={() => opportunity ? onOpportunityDetail(opportunity.id) : contact && onContactDetail(contact.id)} className="flex w-full gap-3 px-5 py-3.5 text-left hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-[#a8864b]"><span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-[#f6f0e3] text-[#173052]"><MessageCircle className="size-4" /></span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium text-slate-800">{interaction.kind} · {contact?.name || opportunity?.title || "CRM"}</p><span className="text-xs text-slate-400">{formatDate(interaction.occurred_at, true)}</span></div><p className="mt-0.5 line-clamp-2 text-sm text-slate-500">{interaction.summary}</p><p className="mt-1 text-xs text-slate-400">{assigned || "Sem responsável"}</p></div></button>; })}</div>}
-      </section>
-    </div>
-
-    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm shadow-slate-900/[0.02]">
-      <div className="border-b border-slate-100 px-5 py-4"><h2 className="font-semibold text-slate-900">Resumo por responsável</h2><p className="mt-1 text-sm text-slate-500">Carteira atual da equipe</p></div>
-      {summaryAssignees.length === 0 ? <p className="p-5 text-sm text-slate-500">Ainda não há registros atribuídos a responsáveis.</p> : <><div className="divide-y divide-slate-100 md:hidden">{summaryAssignees.map((item) => <div key={item.name} className="p-4"><p className="font-medium text-slate-900">{item.name === "__unassigned" ? "Sem responsável" : item.name}</p><div className="mt-2 grid grid-cols-2 gap-2 text-sm text-slate-600"><span>{item.contacts} contatos</span><span>{item.opportunities} oportunidades</span><span>{currency(item.amount)}</span><span>{item.tasks} follow-ups</span><span>{item.meetings} reuniões</span><span>{item.activities} atividades</span></div></div>)}</div><div className="hidden overflow-x-auto md:block"><table className="w-full min-w-[960px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3 font-medium">Responsável</th><th className="px-5 py-3 font-medium">Contatos</th><th className="px-5 py-3 font-medium">Oportunidades abertas</th><th className="px-5 py-3 font-medium">Valor do funil</th><th className="px-5 py-3 font-medium">Follow-ups</th><th className="px-5 py-3 font-medium">Reuniões</th><th className="px-5 py-3 font-medium">Atividades</th></tr></thead><tbody className="divide-y divide-slate-100">{summaryAssignees.map((item) => <tr key={item.name}><td className="px-5 py-3 font-medium text-slate-900">{item.name === "__unassigned" ? "Sem responsável" : item.name}</td><td className="px-5 py-3 text-slate-600">{item.contacts}</td><td className="px-5 py-3 text-slate-600">{item.opportunities}</td><td className="px-5 py-3 font-medium text-slate-800">{currency(item.amount)}</td><td className="px-5 py-3 text-slate-600">{item.tasks}</td><td className="px-5 py-3 text-slate-600">{item.meetings}</td><td className="px-5 py-3 text-slate-600">{item.activities}</td></tr>)}</tbody></table></div></>}
-    </section>
-  </div>;
-}
+export { DashboardView } from "@/components/crm/action-dashboard";
 
 export function ContactsView({ contacts, companies, diagnostics, tasks, canEdit, initialTab = "people", companyFilter, setCompanyFilter, sourceFilter, setSourceFilter, sources, onCreate, onCreateCompany, onEditCompany, onArchiveCompany, onRestoreCompany, onEdit, onArchive, onDetail, onCompanyDetail, onRegisterVisit, onContactVisit, onWhatsApp, onImport, importing, onAddInteraction, onAddTask }: {
   contacts: Contact[]; companies: Company[]; diagnostics: CompanyDiagnostic[]; tasks: Task[]; canEdit: boolean; companyFilter: string; setCompanyFilter: (value: string) => void;
@@ -326,21 +107,39 @@ export function ContactsView({ contacts, companies, diagnostics, tasks, canEdit,
   </section>;
 }
 
-export function PipelineView({ opportunities, contacts, companies, draggedId, setDraggedId, onMove, onCreate, onEdit, onDetail, onToggleDraft, onDelete, stageFilter, setStageFilter, assignedFilter, setAssignedFilter, assignees }: {
-  opportunities: Opportunity[]; contacts: Map<string, Contact>; companies: Map<string, Company>;
+export function PipelineView({ opportunities, contacts, companies, tasks, interactions, canEdit, draggedId, setDraggedId, onMove, onCreate, onEdit, onDetail, onToggleDraft, onDelete, stageFilter, setStageFilter, assignedFilter, setAssignedFilter, assignees }: {
+  opportunities: Opportunity[]; contacts: Map<string, Contact>; companies: Map<string, Company>; tasks: Task[]; interactions: Interaction[]; canEdit: boolean;
   draggedId: string | null; setDraggedId: (id: string | null) => void; onMove: (id: string, stage: string) => void;
   onCreate: () => void; onEdit: (opportunity: Opportunity) => void; onDetail: (id: string) => void;
   onToggleDraft: (opportunity: Opportunity) => void; onDelete: (opportunity: Opportunity) => void;
   stageFilter: string; setStageFilter: (value: string) => void; assignedFilter: string; setAssignedFilter: (value: string) => void; assignees: string[];
 }) {
+  const [scope, setScope] = useState("all");
   const visibleStages = stageFilter ? [stageFilter] : stages;
-  return <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4"><div><h2 className="font-semibold text-slate-900">Oportunidades</h2><p className="mt-1 text-sm text-slate-500">No celular, altere a etapa pelo seletor em cada card.</p></div><Button onClick={onCreate} className="bg-[#173052] text-white hover:bg-[#10233f]"><Plus className="size-4" /> Nova oportunidade</Button></div>
-    <div className="grid gap-3 border-b border-slate-100 p-4 sm:grid-cols-2 sm:px-5"><Field label="Etapa"><NativeSelect value={stageFilter} onChange={(event) => setStageFilter(event.target.value)}><option value="">Todas as etapas</option>{stages.map((stage) => <option key={stage}>{stage}</option>)}</NativeSelect></Field><Field label="Responsável"><NativeSelect value={assignedFilter} onChange={(event) => setAssignedFilter(event.target.value)}><option value="">Todos os responsáveis</option>{assignees.map((name) => <option key={name}>{name}</option>)}</NativeSelect></Field></div>
-    {opportunities.length === 0 ? <EmptyState icon={Target} title="Nenhuma oportunidade encontrada" detail="Cadastre uma oportunidade ou ajuste os filtros do funil." action="Nova oportunidade" onClick={onCreate} /> : <div className="overflow-x-auto p-3 sm:p-4"><div className="flex w-full flex-col gap-3 sm:min-h-[400px] sm:w-max sm:flex-row">{visibleStages.map((stage, index) => {
-      const items = opportunities.filter((item) => item.stage === stage);
-      const accent = ["border-t-[#c5a56a]", "border-t-sky-500", "border-t-blue-500", "border-t-amber-500", "border-t-orange-500", "border-t-rose-500", "border-t-emerald-500", "border-t-slate-500"][stageFilter ? stages.indexOf(stage) : index];
-      return <div key={stage} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (draggedId) onMove(draggedId, stage); setDraggedId(null); }} className={`w-full rounded-lg border border-slate-200 border-t-[3px] bg-slate-50/70 sm:w-[300px] ${!items.length ? "max-sm:hidden" : ""} ${accent}`}><div className="flex items-center justify-between p-3"><div><h3 className="text-sm font-semibold text-slate-800">{stage}</h3><p className="mt-1 text-xs text-slate-500">{items.length} oportunidade{items.length === 1 ? "" : "s"}</p></div><Badge variant="secondary" className="bg-white">{items.length}</Badge></div><div className="space-y-2 px-2 pb-3">{items.map((item) => <article key={item.id} draggable onDragStart={() => setDraggedId(item.id)} onDragEnd={() => setDraggedId(null)} className={`rounded-lg border bg-white p-3.5 shadow-sm ${item.is_draft ? "border-dashed border-[#c5a56a] bg-[#fffdf8]" : "border-slate-200"} ${draggedId === item.id ? "opacity-50" : ""}`}><div className="flex items-start justify-between gap-2"><button type="button" onClick={() => onDetail(item.id)} className="text-left text-sm font-semibold text-slate-900 hover:text-[#173052]">{item.title}</button>{item.is_draft && <Badge className="shrink-0 bg-[#f6f0e3] text-[#173052] hover:bg-[#f6f0e3]">Rascunho</Badge>}</div><p className="mt-1 text-xs text-slate-500">{companies.get(item.company_id || "")?.name || contacts.get(item.contact_id || "")?.name || "Sem empresa"}</p><p className="mt-3 text-sm font-semibold text-slate-800">{currency(item.amount)}</p><p className="mt-1 text-xs text-slate-500">{item.assigned_to || "Sem responsável"}</p><div className="mt-3 flex items-center gap-1"><NativeSelect aria-label={`Etapa de ${item.title}`} className="h-9 min-w-0 flex-1 bg-slate-50 text-sm" value={item.stage} onChange={(event) => onMove(item.id, event.target.value)}>{stages.map((option) => <option key={option}>{option}</option>)}</NativeSelect><Button type="button" size="icon-sm" variant="ghost" title={item.is_draft ? "Publicar no funil" : "Deixar como rascunho"} aria-label={item.is_draft ? `Publicar ${item.title}` : `Salvar ${item.title} como rascunho`} onClick={() => onToggleDraft(item)}><FilePenLine className="size-4 text-[#a8864b]" /></Button><Button type="button" size="icon-sm" variant="ghost" aria-label={`Editar ${item.title}`} onClick={() => onEdit(item)}><Pencil className="size-4" /></Button><Button type="button" size="icon-sm" variant="ghost" aria-label={`Excluir ${item.title}`} onClick={() => onDelete(item)}><Trash2 className="size-4 text-rose-600" /></Button></div></article>)}{items.length === 0 && <p className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-sm text-slate-400">Arraste uma oportunidade aqui</p>}</div></div>;
+  const visible = opportunities.filter((item) => scope === "all" || (item.visibility || "team") === scope);
+  return <section className="min-w-0 space-y-4">
+    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-[#173052]">Oportunidades</h2><p className="mt-1 text-sm text-slate-500">Próximo passo, prazo e responsável sempre à vista.</p></div>{canEdit && <Button onClick={onCreate}><Plus className="size-4" /> Nova oportunidade</Button>}</div>
+    <div className="crm-card grid gap-3 sm:grid-cols-3">
+      <Field label="Visibilidade"><NativeSelect value={scope} onChange={(event) => setScope(event.target.value)}><option value="all">Todas a que tenho acesso</option><option value="personal">Minhas oportunidades pessoais</option><option value="team">Compartilhadas com a equipe</option></NativeSelect></Field>
+      <Field label="Etapa"><NativeSelect value={stageFilter} onChange={(event) => setStageFilter(event.target.value)}><option value="">Todas as etapas</option>{stages.map((stage) => <option key={stage}>{stage}</option>)}</NativeSelect></Field>
+      <Field label="Responsável"><NativeSelect value={assignedFilter} onChange={(event) => setAssignedFilter(event.target.value)}><option value="">Todos os responsáveis</option>{assignees.map((name) => <option key={name}>{name}</option>)}</NativeSelect></Field>
+    </div>
+    {!visible.length ? <div className="crm-card py-10 text-center"><Target className="mx-auto size-8 text-[#b79558]" /><h3 className="mt-3 font-semibold">Nenhuma oportunidade neste filtro</h3><p className="mt-2 text-sm text-slate-500">Ajuste os filtros ou crie uma oportunidade.</p></div> : <div className="min-w-0 overflow-x-auto pb-3"><div className="flex flex-col gap-4 sm:w-max sm:flex-row">{visibleStages.map((stage) => {
+      const items = visible.filter((item) => item.stage === stage);
+      return <section key={stage} onDragOver={(event) => { if (canEdit) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); if (canEdit && draggedId) onMove(draggedId, stage); setDraggedId(null); }} className={"w-full rounded-2xl bg-[#eeeae1] p-3 sm:w-[310px] " + (!items.length ? "max-sm:hidden" : "")}>
+        <div className="mb-4 flex items-start justify-between px-1 pt-1"><div><h3 className="text-sm font-semibold">{stage}</h3><p className="mt-1 text-xs text-slate-500">{currency(items.filter((item) => !item.is_draft).reduce((sum, item) => sum + Number(item.amount), 0))}</p></div><Badge variant="secondary" className="bg-white">{items.length}</Badge></div>
+        <div className="space-y-3">{items.map((item) => { const context = opportunityContext(item, tasks, interactions); return <article key={item.id} draggable={canEdit} onDragStart={() => setDraggedId(item.id)} onDragEnd={() => setDraggedId(null)} className={"rounded-xl bg-white p-4 shadow-sm " + (draggedId === item.id ? "opacity-50" : "")}>
+          <div className="mb-3 flex flex-wrap gap-2"><span className="text-[11px] font-medium text-[#947845]">{item.visibility === "personal" ? "Pessoal · só você" : "Equipe"}</span>{item.is_draft && <Badge variant="secondary">Rascunho</Badge>}</div>
+          <button type="button" onClick={() => onDetail(item.id)} className="text-left text-sm font-semibold leading-6 text-[#173052]">{item.title}</button>
+          <p className="mt-1 text-xs text-slate-500">{companies.get(item.company_id || contacts.get(item.contact_id || "")?.company_id || "")?.name || "Empresa a definir"}</p>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-[#173052]">{item.amount ? currency(item.amount) : "Valor a definir"}</p><span className="text-xs text-slate-500">{item.assigned_to || "Sem responsável"}</span></div>
+          <div className="mt-4 rounded-lg bg-[#faf7f0] p-3"><p className="text-[11px] font-semibold uppercase tracking-wide text-[#947845]">Próximo passo</p><p className="mt-1 text-xs leading-5 text-slate-700">{context.nextStep}</p>
+            <p className={"mt-2 text-xs " + (context.next && taskIsLate(context.next) ? "font-medium text-rose-700" : "text-slate-500")}>{context.next ? "Prazo: " + formatDate(context.next.due_at) : item.expected_close_at ? "Fechamento: " + formatDate(item.expected_close_at + "T12:00:00") : "Prazo a definir"}</p>
+          </div>
+          <p className="mt-3 text-[11px] text-slate-500">Última interação: {context.lastInteraction ? formatDate(context.lastInteraction) : "não registrada"}</p>
+          {canEdit && <div className="mt-3 border-t border-slate-100 pt-3"><NativeSelect aria-label={"Etapa de " + item.title} value={item.stage} onChange={(event) => onMove(item.id, event.target.value)}>{stages.map((option) => <option key={option}>{option}</option>)}</NativeSelect><details className="mt-2"><summary className="cursor-pointer py-2 text-xs text-slate-500">Mais ações</summary><div className="flex flex-wrap gap-1"><Button size="sm" variant="ghost" onClick={() => onEdit(item)}>Editar</Button><Button size="sm" variant="ghost" onClick={() => onToggleDraft(item)}>{item.is_draft ? "Publicar no funil" : "Tornar rascunho"}</Button><Button size="sm" variant="ghost" className="text-rose-700" onClick={() => onDelete(item)}>Excluir</Button></div></details></div>}
+        </article>; })}{!items.length && <p className="rounded-xl border border-dashed border-[#d6cfbf] px-4 py-8 text-center text-xs text-slate-500">Nenhuma oportunidade nesta etapa</p>}</div>
+      </section>;
     })}</div></div>}
   </section>;
 }

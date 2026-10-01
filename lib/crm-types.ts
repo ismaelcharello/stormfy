@@ -21,7 +21,8 @@ export type Company = { id: string; workspace_id: string; name: string; website:
 export type Opportunity = {
   id: string; workspace_id: string; title: string; company_id: string | null; contact_id: string | null;
   stage: string; amount: number; assigned_to: string | null; source: string | null;
-  expected_close_at: string | null; notes: string | null; created_at: string; is_draft?: boolean;
+  expected_close_at: string | null; notes: string | null; created_at: string; updated_at?: string; is_draft?: boolean;
+  visibility?: "team" | "personal"; owner_user_id?: string | null; next_step?: string | null;
 };
 export type Task = {
   id: string; workspace_id: string; title: string; kind: string; contact_id: string | null;
