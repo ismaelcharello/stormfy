@@ -1,0 +1,94 @@
+"use client";
+
+import { useMemo, useState, type FormEvent } from "react";
+import { Archive, Check, ChevronLeft, ChevronRight, GripVertical, MessageSquare, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
+import { Textarea } from "@/components/ui/textarea";
+import { Field } from "@/components/crm/field";
+import type { ActivityChecklistItem, ActivityColumn, BoardActivity, Company, Contact, Opportunity } from "@/lib/crm-types";
+import { newId } from "@/lib/crm-utils";
+
+const draftActivity = (columnId: string): Partial<BoardActivity> => ({ column_id: columnId, title: "", description: "", assigned_to: null, priority: "Média", start_at: null, due_at: null, labels: [], checklist: [], comments: [], contact_id: null, company_id: null, opportunity_id: null, status: "published" });
+const localDate = (value?: string | null) => value ? new Date(new Date(value).getTime() - new Date(value).getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : "";
+
+export function ActivityBoard({ columns, activities, contacts, companies, opportunities, userId, canEdit, isSuperadmin, createRequestToken, busy, onSave, onRemove, onSaveColumn, onRemoveColumn, onAddComment }: {
+  columns: ActivityColumn[]; activities: BoardActivity[]; contacts: Contact[]; companies: Company[]; opportunities: Opportunity[];
+  userId: string; canEdit: boolean; isSuperadmin: boolean; createRequestToken: number; busy: boolean;
+  onSave: (activity: Partial<BoardActivity>) => Promise<boolean>; onRemove: (activity: BoardActivity) => Promise<void>;
+  onSaveColumn: (column: Partial<ActivityColumn>) => Promise<void>; onRemoveColumn: (column: ActivityColumn) => Promise<void>;
+  onAddComment: (activity: BoardActivity, body: string) => Promise<void>;
+}) {
+  const visibleColumns = [...columns].filter((column) => !column.archived_at).sort((a, b) => a.position - b.position);
+  const [editing, setEditing] = useState<Partial<BoardActivity> | null>(() => createRequestToken > 0 && canEdit && visibleColumns[0]?.id ? draftActivity(visibleColumns[0].id) : null);
+  const [query, setQuery] = useState("");
+  const [responsible, setResponsible] = useState("");
+  const [priority, setPriority] = useState("");
+  const [labelFilter, setLabelFilter] = useState("");
+  const [dueFilter, setDueFilter] = useState("");
+  const [show, setShow] = useState<"published" | "draft" | "archived">("published");
+  const [newColumn, setNewColumn] = useState("");
+  const [checkTitle, setCheckTitle] = useState("");
+  const [comment, setComment] = useState("");
+  const [dragId, setDragId] = useState<string | null>(null);
+  const people = useMemo(() => [...new Set(activities.map((item) => item.assigned_to).filter((item): item is string => Boolean(item)))].sort(), [activities]);
+  const labels = useMemo(() => [...new Set(activities.flatMap((item) => item.labels || []))].sort(), [activities]);
+  const dueMatches = (value: string | null) => {
+    if (!dueFilter) return true;
+    if (!value) return dueFilter === "none";
+    const due = new Date(value); const now = new Date();
+    const today = new Date(now); today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+    if (dueFilter === "late") return due < now;
+    if (dueFilter === "today") return due >= today && due < tomorrow;
+    return due >= tomorrow;
+  };
+  const filtered = activities.filter((item) => item.status === show && (show !== "draft" || item.created_by === userId || isSuperadmin)
+    && (!query || `${item.title} ${item.description || ""}`.toLocaleLowerCase("pt-BR").includes(query.toLocaleLowerCase("pt-BR")))
+    && (!responsible || (responsible === "__none" ? !item.assigned_to : item.assigned_to === responsible))
+    && (!priority || item.priority === priority)
+    && (!labelFilter || item.labels.includes(labelFilter))
+    && dueMatches(item.due_at));
+  const startEdit = (activity: Partial<BoardActivity>) => { setEditing({ ...activity, labels: [...(activity.labels || [])], checklist: [...(activity.checklist || [])] }); setCheckTitle(""); setComment(""); };
+  const update = (change: Partial<BoardActivity>) => setEditing((current) => current ? { ...current, ...change } : current);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!editing?.title?.trim()) return toast.error("Informe o título da atividade");
+    if (await onSave(editing)) setEditing(null);
+  };
+  const move = async (activity: BoardActivity, column: ActivityColumn) => {
+    if (!canEdit || activity.column_id === column.id) return;
+    await onSave({ ...activity, column_id: column.id, position: Math.max(0, ...activities.filter((item) => item.column_id === column.id).map((item) => item.position)) + 1, status: "published" });
+  };
+  const relation = (item: BoardActivity) => contacts.find((x) => x.id === item.contact_id)?.name || opportunities.find((x) => x.id === item.opportunity_id)?.title || companies.find((x) => x.id === item.company_id)?.name;
+  const addColumn = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!newColumn.trim()) return;
+    await onSaveColumn({ title: newColumn.trim(), position: visibleColumns.length });
+    setNewColumn("");
+  };
+
+  return <div className="space-y-5">
+    <section className="rounded-xl border border-[#e7e1d6] bg-white p-4 shadow-sm sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[.16em] text-[#a8864b]">Gestão da equipe</p><h2 className="mt-1 text-xl font-semibold text-[#10233f]">Quadro de atividades</h2><p className="mt-1 text-sm text-slate-600">Organize entregas e próximos passos com a equipe.</p></div>{canEdit && <Button onClick={() => startEdit(draftActivity(visibleColumns[0]?.id || ""))} disabled={!visibleColumns.length} className="bg-[#173052] text-white hover:bg-[#10233f]"><Plus className="size-4" /> Nova atividade</Button>}</div>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6"><Field label="Buscar"><Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Título ou descrição" /></Field><Field label="Responsável"><NativeSelect value={responsible} onChange={(e) => setResponsible(e.target.value)}><option value="">Todos</option><option value="__none">Sem responsável</option>{people.map((name) => <option key={name}>{name}</option>)}</NativeSelect></Field><Field label="Prioridade"><NativeSelect value={priority} onChange={(e) => setPriority(e.target.value)}><option value="">Todas</option>{["Baixa", "Média", "Alta", "Urgente"].map((value) => <option key={value}>{value}</option>)}</NativeSelect></Field><Field label="Etiqueta"><NativeSelect value={labelFilter} onChange={(e) => setLabelFilter(e.target.value)}><option value="">Todas</option>{labels.map((label) => <option key={label}>{label}</option>)}</NativeSelect></Field><Field label="Prazo"><NativeSelect value={dueFilter} onChange={(e) => setDueFilter(e.target.value)}><option value="">Todos</option><option value="late">Atrasados</option><option value="today">Hoje</option><option value="upcoming">Próximos</option><option value="none">Sem prazo</option></NativeSelect></Field><Field label="Exibir"><NativeSelect value={show} onChange={(e) => setShow(e.target.value as typeof show)}><option value="published">Publicadas</option><option value="draft">Rascunhos</option><option value="archived">Arquivadas</option></NativeSelect></Field></div>
+    </section>
+    {!filtered.length && <div className="rounded-xl border border-dashed border-[#d2ba84] bg-white p-8 text-center text-sm text-slate-600">Nenhuma atividade neste filtro. {canEdit ? "Use “Nova atividade” para começar." : "Altere os filtros para procurar."}</div>}
+    <div className="flex items-start gap-4 overflow-x-auto pb-5" aria-label="Quadro Kanban de atividades">
+      {visibleColumns.map((column, index) => { const items = filtered.filter((item) => item.column_id === column.id).sort((a,b) => a.position - b.position); return <section key={column.id} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const item = activities.find((x) => x.id === dragId); if (item) void move(item, column); setDragId(null); }} className="w-[290px] shrink-0 rounded-xl border border-[#e6e0d6] bg-[#f8f6f1] p-3 sm:w-[312px]">
+        <div className="mb-3 flex items-center justify-between gap-2 px-1"><div className="min-w-0"><h3 className="truncate text-sm font-semibold text-[#10233f]">{column.title}</h3><p className="text-xs text-slate-500">{items.length} atividade{items.length === 1 ? "" : "s"}</p></div><span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-[#173052]">{items.length}</span></div>
+        <div className="space-y-2">{items.map((item) => <article key={item.id} draggable={canEdit} onDragStart={() => setDragId(item.id)} onDragEnd={() => setDragId(null)} className="rounded-lg border border-[#e6e0d6] bg-white p-3 shadow-sm"><div className="flex items-start gap-2"><GripVertical className="mt-0.5 size-4 shrink-0 text-slate-300" /><button onClick={() => startEdit(item)} className="min-w-0 flex-1 text-left text-sm font-semibold text-[#10233f] hover:underline">{item.title}</button></div>{relation(item) && <p className="mt-2 truncate pl-6 text-xs text-slate-500">{relation(item)}</p>}{item.description && <p className="mt-2 line-clamp-2 pl-6 text-sm text-slate-600">{item.description}</p>}{item.labels.length > 0 && <div className="mt-2 flex flex-wrap gap-1 pl-6">{item.labels.map((label) => <span key={label} className="rounded bg-[#f3e8d2] px-2 py-0.5 text-xs text-[#674f29]">{label}</span>)}</div>}<div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 pl-6 text-xs text-slate-500"><span className={item.due_at && new Date(item.due_at) < new Date() && column.title !== "Concluído" ? "font-semibold text-rose-700" : ""}>{item.due_at ? new Date(item.due_at).toLocaleDateString("pt-BR") : "Sem prazo"}</span><span>{item.priority}</span><span>{item.assigned_to || "Sem responsável"}</span>{item.checklist.length > 0 && <span><Check className="inline size-3" /> {item.checklist.filter((x) => x.done).length}/{item.checklist.length}</span>}{item.comments.length > 0 && <span><MessageSquare className="inline size-3" /> {item.comments.length}</span>}</div>{canEdit && <NativeSelect aria-label={`Mover ${item.title} para coluna`} className="mt-3 h-8 w-full text-xs" value={item.column_id} onChange={(e) => { const next = visibleColumns.find((x) => x.id === e.target.value); if (next) void move(item, next); }}>{visibleColumns.map((col) => <option key={col.id} value={col.id}>{col.title}</option>)}</NativeSelect>}</article>)}{canEdit && show === "published" && <button type="button" onClick={() => startEdit(draftActivity(column.id))} className="w-full rounded-lg border border-dashed border-[#d2ba84] px-3 py-2 text-left text-sm text-[#173052] hover:bg-white">+ Adicionar cartão</button>}</div>
+        {canEdit && <div className="mt-3 flex flex-wrap gap-1 border-t border-[#e6e0d6] pt-3"><Button size="icon-sm" variant="ghost" title="Mover coluna à esquerda" aria-label={`Mover ${column.title} à esquerda`} disabled={index === 0 || busy} onClick={() => void onSaveColumn({ ...column, position: visibleColumns[index - 1].position - .5 })}><ChevronLeft className="size-4" /></Button><Button size="icon-sm" variant="ghost" title="Mover coluna à direita" aria-label={`Mover ${column.title} à direita`} disabled={index === visibleColumns.length - 1 || busy} onClick={() => void onSaveColumn({ ...column, position: visibleColumns[index + 1].position + .5 })}><ChevronRight className="size-4" /></Button><Button size="sm" variant="ghost" onClick={() => { const next = window.prompt("Novo nome da coluna", column.title); if (next?.trim()) void onSaveColumn({ ...column, title: next.trim() }); }}>Renomear</Button><Button size="icon-sm" variant="ghost" title="Arquivar coluna" aria-label={`Arquivar ${column.title}`} disabled={items.length > 0 || column.title === "Concluído"} onClick={() => void onRemoveColumn(column)}><Archive className="size-4" /></Button></div>}
+      </section>; })}
+      {canEdit && <form onSubmit={addColumn} className="w-[270px] shrink-0 space-y-2 rounded-xl border border-dashed border-[#d2ba84] bg-white p-3"><Field label="Nova coluna"><Input maxLength={80} value={newColumn} onChange={(e) => setNewColumn(e.target.value)} placeholder="Nome da coluna" /></Field><Button type="submit" size="sm" disabled={busy || !newColumn.trim()}><Plus className="size-4" /> Adicionar coluna</Button></form>}
+    </div>
+    <Dialog open={Boolean(editing)} onOpenChange={(open) => !open && setEditing(null)}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>{editing?.id ? "Detalhes da atividade" : "Nova atividade"}</DialogTitle><DialogDescription>Os cartões publicados ficam disponíveis para toda a equipe.</DialogDescription></DialogHeader>{editing && <form onSubmit={submit} className="space-y-4"><Field label="Título *"><Input required maxLength={200} disabled={!canEdit} value={editing.title || ""} onChange={(e) => update({ title: e.target.value })} /></Field><Field label="Descrição"><Textarea disabled={!canEdit} value={editing.description || ""} onChange={(e) => update({ description: e.target.value })} rows={3} /></Field><div className="grid gap-3 sm:grid-cols-2"><Field label="Coluna"><NativeSelect disabled={!canEdit} value={editing.column_id} onChange={(e) => update({ column_id: e.target.value })}>{visibleColumns.map((col) => <option key={col.id} value={col.id}>{col.title}</option>)}</NativeSelect></Field><Field label="Prioridade"><NativeSelect disabled={!canEdit} value={editing.priority} onChange={(e) => update({ priority: e.target.value as BoardActivity["priority"] })}>{["Baixa", "Média", "Alta", "Urgente"].map((value) => <option key={value}>{value}</option>)}</NativeSelect></Field><Field label="Responsável"><Input disabled={!canEdit} value={editing.assigned_to || ""} onChange={(e) => update({ assigned_to: e.target.value || null })} placeholder="Sem responsável" /></Field><Field label="Início"><Input disabled={!canEdit} type="datetime-local" value={localDate(editing.start_at)} onChange={(e) => update({ start_at: e.target.value ? new Date(e.target.value).toISOString() : null })} /></Field><Field label="Prazo"><Input disabled={!canEdit} type="datetime-local" value={localDate(editing.due_at)} onChange={(e) => update({ due_at: e.target.value ? new Date(e.target.value).toISOString() : null })} /></Field><Field label="Contato"><NativeSelect disabled={!canEdit} value={editing.contact_id || ""} onChange={(e) => update({ contact_id: e.target.value || null })}><option value="">Nenhum</option>{contacts.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</NativeSelect></Field><Field label="Empresa"><NativeSelect disabled={!canEdit} value={editing.company_id || ""} onChange={(e) => update({ company_id: e.target.value || null })}><option value="">Nenhuma</option>{companies.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</NativeSelect></Field><Field label="Oportunidade"><NativeSelect disabled={!canEdit} value={editing.opportunity_id || ""} onChange={(e) => update({ opportunity_id: e.target.value || null })}><option value="">Nenhuma</option>{opportunities.map((x) => <option key={x.id} value={x.id}>{x.title}</option>)}</NativeSelect></Field><Field label="Etiquetas (separe por vírgula)"><Input disabled={!canEdit} value={(editing.labels || []).join(", ")} onChange={(e) => update({ labels: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} /></Field></div>
+      <div><p className="mb-2 text-sm font-medium">Checklist</p>{(editing.checklist || []).map((item) => <label key={item.id} className="flex items-center gap-2 py-1 text-sm"><input type="checkbox" checked={item.done} disabled={!canEdit} onChange={(e) => update({ checklist: editing.checklist?.map((x) => x.id === item.id ? { ...x, done: e.target.checked } : x) })} />{item.title}{canEdit && <button type="button" className="ml-auto text-rose-700" aria-label={`Remover ${item.title}`} onClick={() => update({ checklist: editing.checklist?.filter((x) => x.id !== item.id) })}><Trash2 className="size-4" /></button>}</label>)}{canEdit && <div className="mt-2 flex gap-2"><Input value={checkTitle} onChange={(e) => setCheckTitle(e.target.value)} placeholder="Novo item" /><Button type="button" variant="outline" onClick={() => { if (!checkTitle.trim()) return; const item: ActivityChecklistItem = { id: newId(), title: checkTitle.trim(), done: false }; update({ checklist: [...(editing.checklist || []), item] }); setCheckTitle(""); }}>Adicionar</Button></div>}</div>
+      {editing.id && <div className="border-t pt-4"><p className="mb-2 text-sm font-medium">Comentários</p><div className="max-h-40 space-y-2 overflow-y-auto">{editing.comments?.map((item) => <div key={item.id} className="rounded-md bg-[#f8f6f1] p-2 text-sm"><strong>{item.author_name}</strong> · {new Date(item.created_at).toLocaleString("pt-BR")}<p>{item.body}</p></div>)}</div>{canEdit && <div className="mt-2 flex gap-2"><Input value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Escreva um comentário" /><Button type="button" variant="outline" disabled={!comment.trim() || busy} onClick={async () => { await onAddComment(editing as BoardActivity, comment.trim()); setComment(""); setEditing(null); }}>Enviar</Button></div>}</div>}
+      <DialogFooter className="flex-wrap">{canEdit && editing.id && <><Button type="button" variant="outline" disabled={busy} onClick={async () => { await onSave({ ...editing, status: editing.status === "archived" ? "published" : "archived" }); setEditing(null); }}>{editing.status === "archived" ? <RotateCcw className="size-4" /> : <Archive className="size-4" />}{editing.status === "archived" ? "Restaurar" : "Arquivar"}</Button><Button type="button" variant="outline" disabled={busy} className="text-rose-700" onClick={() => { void onRemove(editing as BoardActivity); setEditing(null); }}><Trash2 className="size-4" /> Excluir</Button></>}{canEdit && <><Button type="button" variant="outline" disabled={busy} onClick={async () => { if (!editing.title?.trim()) return toast.error("Informe o título"); if (await onSave({ ...editing, status: "draft" })) setEditing(null); }}>Salvar rascunho</Button><Button type="submit" disabled={busy} className="bg-[#173052] text-white hover:bg-[#10233f]">{editing.status === "draft" ? "Publicar" : "Salvar atividade"}</Button></>}</DialogFooter>
+    </form>}</DialogContent></Dialog>
+  </div>;
+}
