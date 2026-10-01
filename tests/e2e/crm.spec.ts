@@ -36,11 +36,11 @@ for (const width of [360, 390, 768, 1024, 1440]) {
     await expect(page.getByText(diagnostic.summary, { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Registrar reunião", exact: true }).filter({ visible: true }).click();
     await expect(page.getByLabel("Empresa *", { exact: true })).toHaveValue(company.id);
-    await page.getByLabel("Texto ou transcrição (opcional)").fill("Reunião sintética: apresentar parceiros estratégicos.");
+    await page.getByLabel("Ata, transcrição ou anotações (opcional)").fill("Reunião sintética: apresentar parceiros estratégicos.");
     await page.getByRole("button", { name: "Continuar", exact: true }).click();
-    await expect(page.getByLabel("Resumo da conversa *")).toHaveValue("Reunião sintética: apresentar parceiros estratégicos.");
-    await page.getByLabel("O que fazer depois? (opcional)").fill("Enviar apresentação de teste");
-    await page.getByLabel("Quando fazer o follow-up? (opcional)").fill("2026-10-08T10:00");
+    await expect(page.getByLabel("O essencial da conversa *")).toHaveText("Reunião sintética: apresentar parceiros estratégicos.");
+    await page.getByLabel("Próxima ação prioritária").fill("Enviar apresentação de teste");
+    await page.getByLabel("Prazo / follow-up").fill("2026-10-08T10:00");
     const save = page.getByRole("button", { name: "Salvar reunião", exact: true });
     await expect(save).toBeInViewport();
     await noOverflow(page);
@@ -67,12 +67,12 @@ test("draft text and attachment notice survive a page reload", async ({ page }) 
   await page.getByLabel("Empresa *", { exact: true }).selectOption(company.id);
   await page.locator('input[type="file"]').setInputFiles({ name: "ata-qa.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\n" + "synthetic fixture ".repeat(20)) });
   await expect(page.getByText("Ata selecionada")).toBeVisible();
-  await page.getByLabel("Texto ou transcrição (opcional)").fill("Rascunho que precisa sobreviver à atualização.");
+  await page.getByLabel("Ata, transcrição ou anotações (opcional)").fill("Rascunho que precisa sobreviver à atualização.");
   await page.reload();
   await page.getByRole("button", { name: "Abrir prévia local" }).click();
   await expect(page.getByText(/Rascunho recuperado/)).toBeVisible();
   await expect(page.getByText(/o navegador não restaurou o arquivo/)).toBeVisible();
-  await expect(page.getByLabel("Texto ou transcrição (opcional)")).toHaveValue("Rascunho que precisa sobreviver à atualização.");
+  await expect(page.getByLabel("Ata, transcrição ou anotações (opcional)")).toHaveText("Rascunho que precisa sobreviver à atualização.");
 });
 
 test("creates a company and a personal opportunity with an editable next step", async ({ page }) => {
