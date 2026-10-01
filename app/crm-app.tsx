@@ -1066,10 +1066,11 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
     setModal("task");
   };
 
-  const completeTask = async (taskId: string) => {
+  const completeTask = async (taskId: string, promptForNotes = true) => {
     if (!workspace) return;
     const meeting = tasks.find((item) => item.id === taskId && item.kind === "Reunião");
     const offerMeetingNotes = () => {
+      if (!promptForNotes) return;
       if (!meeting?.contact_id && !meeting?.opportunity_id) return;
       setInteractionForm({ contact_id: meeting.contact_id || "", opportunity_id: meeting.opportunity_id || "", kind: "Reunião", summary: `Reunião: ${meeting.title}`, result: "" });
       setModal("interaction");
@@ -1090,6 +1091,20 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
       await refreshData();
       offerMeetingNotes();
     }
+  };
+
+  const reopenTask = async (task: Task) => {
+    if (!workspace) return;
+    const values = { status: "Pendente", completed_at: null, ...(task.kind === "Reunião" ? { meeting_status: "Agendada" } : {}) };
+    if (demoMode) {
+      setTasks((current) => current.map((item) => item.id === task.id ? { ...item, ...values } as Task : item));
+      toast.success("Atividade voltou para pendentes");
+      return;
+    }
+    if (!supabase) return;
+    const { error } = await supabase.from("tasks").update(values).eq("id", task.id).eq("workspace_id", workspace.id).select("id").single();
+    if (error) toast.error("Não consegui reabrir a atividade", { description: error.message });
+    else { toast.success("Atividade voltou para pendentes"); await refreshData(); }
   };
 
   const openWhatsApp = (phone?: string | null) => {
@@ -1297,7 +1312,7 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
           {activeView === "dashboard" && <DashboardView canEdit={canEdit} contacts={contacts} companies={companies.filter((item) => !item.archived_at)} opportunities={opportunities} tasks={tasks.filter((item) => !item.archived_at)} interactions={interactions} activities={activities} diagnostics={diagnostics} onView={(view) => { if (view === "tasks") setTaskStatusFilter("Pendente"); setActiveView(view); }} onCreateTask={() => setModal("task")} onCreateMeeting={() => openMeetingForm()} onCreateActivity={() => { setActiveView("activities"); setActivityCreateRequest((current) => current + 1); }} onCreateCompany={() => setModal("company")} onCreateDiagnostic={() => openDiagnostic()} onCompanyDetail={(id) => setDetailCompanyId(id)} onCompleteTask={registerTaskResult} onCreateOpportunity={() => setModal("opportunity")} onCreateContact={() => setModal("contact")} onCreateInteraction={() => setModal("interaction")} onContactDetail={(id) => { setDetailContactId(id); setModal("contactDetail"); }} onOpportunityDetail={(id) => { setDetailOpportunityId(id); setModal("opportunityDetail"); }} onOpenStage={(stage) => { setOpportunityStageFilter(stage); setOpportunityAssignedFilter(""); setActiveView("pipeline"); }} />}
 {(activeView === "contacts" || activeView === "companies") && <ContactsView key={activeView} initialTab={activeView === "companies" ? "companies" : "people"} contacts={activeView === "companies" ? contacts : filteredContacts} diagnostics={diagnostics} tasks={tasks} canEdit={canEdit} companies={companies.filter((item) => !search.trim() || item.name.toLowerCase().includes(search.trim().toLowerCase()))} companyFilter={contactCompanyFilter} setCompanyFilter={setContactCompanyFilter} sourceFilter={contactSourceFilter} setSourceFilter={setContactSourceFilter} sources={[...new Set(contacts.map((item) => item.source).filter((value): value is string => Boolean(value)))]} onCreate={() => setModal("contact")} onCreateCompany={() => setModal("company")} onEditCompany={editCompany} onCompanyDetail={(id) => setDetailCompanyId(id)} onRegisterVisit={(id) => openDiagnostic(id)} onContactVisit={(companyId, contactId) => openDiagnostic(companyId,contactId)} onArchiveCompany={(item) => archiveRecord("companies", item.id, item.name)} onRestoreCompany={restoreCompany} onEdit={editContact} onArchive={(item) => archiveRecord("contacts", item.id, item.name)} onDetail={(id) => { setDetailContactId(id); setModal("contactDetail"); }} onWhatsApp={openWhatsApp} onImport={importInitialContacts} importing={importing} onAddInteraction={(contactId) => { setInteractionForm((current) => ({ ...current, contact_id: contactId })); setModal("interaction"); }} onAddTask={(contactId) => { setTaskForm((current) => ({ ...current, contact_id: contactId })); setModal("task"); }} />}
           {activeView === "pipeline" && <PipelineView canEdit={canEdit} tasks={tasks} interactions={interactions} opportunities={filteredOpportunities} contacts={contactById} companies={companyById} draggedId={draggedOpportunity} setDraggedId={setDraggedOpportunity} onMove={updateOpportunityStage} onCreate={() => setModal("opportunity")} onEdit={editOpportunity} onDetail={(id) => { setDetailOpportunityId(id); setModal("opportunityDetail"); }} onToggleDraft={toggleOpportunityDraft} onDelete={deleteOpportunity} stageFilter={opportunityStageFilter} setStageFilter={setOpportunityStageFilter} assignedFilter={opportunityAssignedFilter} setAssignedFilter={setOpportunityAssignedFilter} assignees={[...new Set(opportunities.map((item) => item.assigned_to).filter((value): value is string => Boolean(value)))]} />}
-          {activeView === "tasks" && <TasksView tasks={filteredTasks} contacts={contactById} opportunities={opportunityById} onCreate={() => setModal("task")} onComplete={registerTaskResult} onEdit={editTask} onCancel={cancelTask} statusFilter={taskStatusFilter} setStatusFilter={setTaskStatusFilter} />}
+          {activeView === "tasks" && <TasksView tasks={filteredTasks} contacts={contactById} opportunities={opportunityById} onCreate={() => setModal("task")} onComplete={(id) => void completeTask(id, false)} onRegisterResult={registerTaskResult} onReopen={(task) => void reopenTask(task)} onEdit={editTask} onCancel={cancelTask} statusFilter={taskStatusFilter} setStatusFilter={setTaskStatusFilter} />}
           {activeView === "activities" && <ActivityBoard columns={columns} activities={activities} contacts={contacts} companies={companies} opportunities={opportunities} userId={user?.id || ""} canEdit={canEdit} isSuperadmin={role === "superadmin"} createRequestToken={activityCreateRequest} busy={busy} onSave={saveBoardActivity} onRemove={removeBoardActivity} onSaveColumn={saveBoardColumn} onRemoveColumn={archiveBoardColumn} onAddComment={addBoardComment} />}
           {activeView === "calendar" && <CalendarView tasks={tasks} contacts={contactById} companies={companyById} opportunities={opportunityById} onCreateMeeting={openMeetingForm} onEdit={editTask} onComplete={completeTask} onCancel={cancelTask} onArchive={archiveMeeting} onDelete={deleteMeeting} canEdit={canEdit} canDelete={role === "superadmin" || role === "admin"} onOpenRelated={(task) => { if (task.opportunity_id) { setDetailOpportunityId(task.opportunity_id); setModal("opportunityDetail"); } else if (task.contact_id) { setDetailContactId(task.contact_id); setModal("contactDetail"); } }} />}
           {activeView === "team" && <TeamManagement workspace={workspace} members={members} invites={invites} audit={teamAudit} role={role} userId={user?.id || ""} email={user?.email || ""} inviteEmail={inviteEmail} inviteRole={inviteRole} setInviteEmail={setInviteEmail} setInviteRole={setInviteRole} onInvite={createInvite} onChangeRole={changeMemberRole} onRemove={removeMember} onRevoke={revokeInvite} busy={busy} demo={demoMode} />}

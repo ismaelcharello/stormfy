@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Archive, BadgeCheck, Building2, CalendarClock, CalendarDays, Check, ChevronLeft, ChevronRight, ExternalLink, FilePenLine, LoaderCircle, MessageCircle, Pencil, Plus, Target, UserPlus, Users } from "lucide-react";
+import { Archive, BadgeCheck, Building2, CalendarClock, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ExternalLink, FilePenLine, LoaderCircle, MessageCircle, Pencil, Plus, RotateCcw, Target, UserPlus, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -222,20 +222,69 @@ export function CalendarView({ tasks, contacts, companies, opportunities, onCrea
   </div>;
 }
 
-export function TasksView({ tasks, contacts, opportunities, onCreate, onComplete, onEdit, onCancel, statusFilter, setStatusFilter }: {
+export function TasksView({ tasks, contacts, opportunities, onCreate, onComplete, onRegisterResult, onReopen, onEdit, onCancel, statusFilter, setStatusFilter }: {
   tasks: Task[]; contacts: Map<string, Contact>; opportunities: Map<string, Opportunity>; onCreate: () => void;
-  onComplete: (id: string) => void; onEdit: (task: Task) => void; onCancel: (task: Task) => void;
+  onComplete: (id: string) => void; onRegisterResult: (id: string) => void; onReopen: (task: Task) => void;
+  onEdit: (task: Task) => void; onCancel: (task: Task) => void;
   statusFilter: string; setStatusFilter: (status: string) => void;
 }) {
   const pending = tasks.filter((item) => item.status === "Pendente");
   const completed = tasks.filter((item) => item.status === "Concluída");
   const cancelled = tasks.filter((item) => item.status === "Cancelada");
-  return <div className="space-y-5"><div className="flex flex-wrap items-end justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4"><div className="w-full max-w-xs"><Field label="Status da tarefa"><NativeSelect value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">Todos os status</option><option>Pendente</option><option>Concluída</option><option>Cancelada</option></NativeSelect></Field></div><Button onClick={onCreate} className="bg-[#173052] text-white hover:bg-[#10233f]"><Plus className="size-4" /> Agendar follow-up</Button></div><div className="grid gap-5 xl:grid-cols-[1.3fr_0.7fr]"><section className="overflow-hidden rounded-xl border border-slate-200 bg-white"><div className="border-b border-slate-100 px-5 py-4"><h2 className="font-semibold text-slate-900">Pendentes ({pending.length})</h2></div>{pending.length ? <div className="divide-y divide-slate-100">{pending.map((task) => <TaskRow key={task.id} task={task} contactName={contacts.get(task.contact_id || "")?.name} opportunityName={opportunities.get(task.opportunity_id || "")?.title} onComplete={onComplete} onEdit={onEdit} onCancel={onCancel} />)}</div> : <EmptyState icon={CalendarClock} title="Nenhuma tarefa pendente" detail="Os próximos follow-ups aparecerão aqui." action="Agendar tarefa" onClick={onCreate} />}</section><section className="overflow-hidden rounded-xl border border-slate-200 bg-white"><div className="border-b border-slate-100 px-5 py-4"><h2 className="font-semibold text-slate-900">Concluídas ({completed.length})</h2></div>{completed.length ? <div className="divide-y divide-slate-100">{completed.map((item) => <div key={item.id} className="px-5 py-4"><p className="text-sm font-medium text-slate-900">{item.title}</p><p className="mt-1 text-xs text-slate-500">{formatDate(item.due_at, true)}</p></div>)}</div> : <p className="p-5 text-sm text-slate-500">Ainda não há tarefas concluídas.</p>}</section></div>{cancelled.length > 0 && <section className="rounded-xl border border-slate-200 bg-white p-5"><h2 className="font-semibold text-slate-900">Canceladas ({cancelled.length})</h2><div className="mt-3 space-y-2 text-sm text-slate-600">{cancelled.map((item) => <p key={item.id}>{item.title}</p>)}</div></section>}</div>;
+  const namesFor = (task: Task) => ({ contactName: contacts.get(task.contact_id || "")?.name, opportunityName: opportunities.get(task.opportunity_id || "")?.title });
+  return <div className="space-y-5">
+    <div className="flex flex-wrap items-end justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4"><div className="w-full max-w-xs"><Field label="Status da tarefa"><NativeSelect value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">Todos os status</option><option>Pendente</option><option>Concluída</option><option>Cancelada</option></NativeSelect></Field></div><Button onClick={onCreate} className="bg-[#173052] text-white hover:bg-[#10233f]"><Plus className="size-4" /> Agendar follow-up</Button></div>
+    <div className="grid gap-5 xl:grid-cols-[1.3fr_0.7fr]">
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="border-b border-slate-100 px-5 py-4"><h2 className="font-semibold text-slate-900">Pendentes ({pending.length})</h2><p className="mt-1 text-xs text-slate-500">Marque o check para concluir ou abra para ver todas as ações.</p></div>
+        {pending.length ? <div className="divide-y divide-slate-100">{pending.map((task) => <TaskRow key={task.id} task={task} {...namesFor(task)} onComplete={onComplete} onRegisterResult={onRegisterResult} onEdit={onEdit} onCancel={onCancel} />)}</div> : <EmptyState icon={CalendarClock} title="Nenhuma tarefa pendente" detail="Os próximos follow-ups aparecerão aqui." action="Agendar tarefa" onClick={onCreate} />}
+      </section>
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="border-b border-slate-100 px-5 py-4"><h2 className="font-semibold text-slate-900">Concluídas ({completed.length})</h2></div>
+        {completed.length ? <div className="divide-y divide-slate-100">{completed.map((task) => <TaskRow key={task.id} task={task} {...namesFor(task)} onReopen={onReopen} />)}</div> : <p className="p-5 text-sm text-slate-500">Ainda não há tarefas concluídas.</p>}
+      </section>
+    </div>
+    {cancelled.length > 0 && <section className="overflow-hidden rounded-xl border border-slate-200 bg-white"><div className="border-b border-slate-100 px-5 py-4"><h2 className="font-semibold text-slate-900">Canceladas ({cancelled.length})</h2></div><div className="divide-y divide-slate-100">{cancelled.map((task) => <TaskRow key={task.id} task={task} {...namesFor(task)} onReopen={onReopen} />)}</div></section>}
+  </div>;
 }
 
-function TaskRow({ task, contactName, opportunityName, onComplete, onEdit, onCancel }: { task: Task; contactName?: string; opportunityName?: string; onComplete: (id: string) => void; onEdit?: (task: Task) => void; onCancel?: (task: Task) => void }) {
+function TaskRow({ task, contactName, opportunityName, onComplete, onRegisterResult, onReopen, onEdit, onCancel }: { task: Task; contactName?: string; opportunityName?: string; onComplete?: (id: string) => void; onRegisterResult?: (id: string) => void; onReopen?: (task: Task) => void; onEdit?: (task: Task) => void; onCancel?: (task: Task) => void }) {
+  const [open, setOpen] = useState(false);
   const late = taskIsLate(task);
-  return <div className="flex items-start gap-3 px-5 py-4"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="text-sm font-medium text-slate-800">{task.title}</p><Badge variant="secondary" className={late ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-600"}>{labelForTask(task)}</Badge></div><p className="mt-1 text-sm text-slate-500">{contactName || opportunityName || "CRM"}</p><div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500"><span className={late ? "font-semibold text-rose-700" : ""}>{formatDate(task.due_at, true)}</span><span>Responsável: {task.assigned_to || "Não definido"}</span><span>Prioridade: {task.priority}</span></div>{task.description && <p className="mt-2 text-sm text-slate-600">{task.description}</p>}<div className="mt-3 flex flex-wrap gap-2"><Button size="sm" className="bg-[#173052] text-white" onClick={() => onComplete(task.id)}>Registrar resultado</Button>{onEdit && <Button size="sm" variant="outline" onClick={() => onEdit(task)}>Editar</Button>}{onCancel && <Button size="sm" variant="ghost" onClick={() => onCancel(task)}>Cancelar</Button>}</div></div></div>;
+  const completed = task.status === "Concluída";
+  const cancelled = task.status === "Cancelada";
+  const related = contactName || opportunityName || "CRM";
+  return <article className="px-4 py-4 sm:px-5">
+    <div className="flex items-start gap-3">
+      <button
+        type="button"
+        aria-label={completed || cancelled ? `Voltar ${task.title} para pendentes` : `Concluir ${task.title}`}
+        title={completed || cancelled ? "Voltar para pendentes" : "Marcar como concluída"}
+        onClick={() => completed || cancelled ? onReopen?.(task) : onComplete?.(task.id)}
+        className={`mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#173052]/40 ${completed ? "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700" : cancelled ? "border-slate-300 bg-slate-100 text-slate-500 hover:border-[#173052] hover:text-[#173052]" : "border-slate-300 bg-white text-transparent hover:border-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"}`}
+      >
+        {completed ? <Check className="size-4" strokeWidth={3} /> : cancelled ? <RotateCcw className="size-3.5" /> : <Check className="size-4" strokeWidth={3} />}
+      </button>
+      <button type="button" aria-expanded={open} aria-controls={`task-details-${task.id}`} onClick={() => setOpen((current) => !current)} className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#173052]/30">
+        <div className="flex flex-wrap items-center gap-2"><p className={`text-sm font-medium ${completed ? "text-slate-500 line-through" : "text-slate-800"}`}>{task.title}</p><Badge variant="secondary" className={late ? "bg-rose-50 text-rose-700" : completed ? "bg-emerald-50 text-emerald-700" : cancelled ? "bg-slate-100 text-slate-500" : "bg-slate-100 text-slate-600"}>{labelForTask(task)}</Badge></div>
+        <p className="mt-1 text-sm text-slate-500">{related} · {formatDate(task.due_at, true)}</p>
+      </button>
+      <Button type="button" size="sm" variant="ghost" aria-expanded={open} aria-controls={`task-details-${task.id}`} onClick={() => setOpen((current) => !current)} className="shrink-0 text-[#173052]">
+        {open ? <><ChevronUp className="size-4" /> <span className="hidden sm:inline">Fechar</span></> : <><ChevronDown className="size-4" /> <span className="hidden sm:inline">Abrir</span></>}
+      </Button>
+    </div>
+    {open && <div id={`task-details-${task.id}`} className="ml-10 mt-3 border-l-2 border-[#eadbb9] pl-4">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500"><span>Responsável: {task.assigned_to || "Não definido"}</span><span>Prioridade: {task.priority}</span></div>
+      {task.description && <p className="mt-2 text-sm leading-6 text-slate-600">{task.description}</p>}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {!completed && !cancelled && onRegisterResult && <Button size="sm" className="bg-[#173052] text-white" onClick={() => onRegisterResult(task.id)}>Registrar resultado</Button>}
+        {!completed && !cancelled && onEdit && <Button size="sm" variant="outline" onClick={() => onEdit(task)}>Editar</Button>}
+        {!completed && !cancelled && onCancel && <Button size="sm" variant="ghost" onClick={() => onCancel(task)}>Cancelar</Button>}
+        {(completed || cancelled) && onReopen && <Button size="sm" variant="outline" onClick={() => onReopen(task)}><RotateCcw className="size-4" /> Voltar para pendentes</Button>}
+        <Button size="sm" variant="ghost" onClick={() => setOpen(false)}><ChevronUp className="size-4" /> Fechar</Button>
+      </div>
+    </div>}
+  </article>;
 }
 
 export function TeamView({ workspace, owner, userEmail, inviteEmail, setInviteEmail, onInvite, busy }: { workspace: Workspace; owner: boolean; userEmail: string; inviteEmail: string; setInviteEmail: (email: string) => void; onInvite: () => void; busy: boolean }) {
