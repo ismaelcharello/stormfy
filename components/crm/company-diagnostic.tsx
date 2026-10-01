@@ -78,7 +78,7 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
   const [form, setForm] = useState<DiagnosticForm>(() => initial ? diagnosticFormFromRecord(initial) : meeting ? diagnosticFormFromMeeting(meeting, responsible) : emptyDiagnostic(companyId, contactId, responsible));
   const [recordId, setRecordId] = useState(initial?.id);
   const [pasteMode, setPasteMode] = useState(!initial);
-  const [rawNotes, setRawNotes] = useState("");
+  const [rawNotes, setRawNotes] = useState(initial?.business_details.raw_notes || "");
   const [pdf, setPdf] = useState<File | null>(() => pendingMeetingFiles.get(draftStorageKey) || null);
   const [missingFile, setMissingFile] = useState("");
   const [storageError, setStorageError] = useState(false);
@@ -147,7 +147,7 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
     }
     setBusy(true); setError("");
     try {
-      const id = await onSave({ ...form, status, business_details: { ...form.business_details, ...(rawNotes.trim() ? { raw_notes: rawNotes.trim() } : {}) }, ideas: form.ideas.filter((idea) => idea.title.trim()) }, recordId, pdf);
+      const id = await onSave({ ...form, status, business_details: { ...form.business_details, raw_notes: rawNotes.trim() }, ideas: form.ideas.filter((idea) => idea.title.trim()) }, recordId, pdf);
       if (id) {
         setDirty(false); setRecordId(id); pendingMeetingFiles.delete(draftStorageKey);
         try { window.localStorage.removeItem(draftStorageKey); } catch { /* Saved on the server; storage cleanup must not report failure. */ }

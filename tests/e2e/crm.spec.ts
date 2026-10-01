@@ -16,7 +16,7 @@ async function noOverflow(page: Page) {
 }
 async function capture(page: Page, name: string, width: number) {
   if (process.env.STORMFY_SCREENSHOT_LOGS === "1" && [390, 1440].includes(width)) {
-    console.log("STORMFY_SCREENSHOT_" + name + "_" + width + ":" + (await page.screenshot({ type: "jpeg", quality: 55 })).toString("base64"));
+    console.log("STORMFY_SCREENSHOT_" + name + "_" + width + ":" + (await page.screenshot({ type: "jpeg", quality: 55, animations: "disabled" })).toString("base64"));
   }
 }
 
@@ -50,7 +50,8 @@ for (const width of [360, 390, 768, 1024, 1440]) {
     await page.getByRole("button", { name: "Ver ficha", exact: true }).first().click();
     await page.getByRole("tab", { name: "Reuniões e atas" }).click();
     await expect(page.getByText(diagnostic.summary, { exact: true })).toBeVisible();
-    await expect(page.getByText("Reunião sintética: apresentar parceiros estratégicos.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("tabpanel").getByText("Ata salva", { exact: true })).toHaveCount(2);
+    await expect(page.getByRole("tabpanel").getByText("Reunião sintética: apresentar parceiros estratégicos.", { exact: true }).filter({ visible: true })).toBeVisible();
     await page.getByRole("button", { name: "Close", exact: true }).click();
     await page.getByRole("button", { name: "Funil", exact: true }).filter({ visible: true }).first().click();
     await expect(page.getByText("Próximo passo", { exact: true }).first()).toBeVisible();
@@ -88,7 +89,7 @@ test("creates a company and a personal opportunity with an editable next step", 
   await page.getByLabel("Título da oportunidade *").fill("Conexão estratégica de teste");
   await page.getByLabel("Empresa", { exact: true }).selectOption({ label: "Empresa criada no teste" });
   await page.getByLabel("Quem pode ver esta oportunidade?").selectOption("personal");
-  await expect(page.getByLabel("Responsável", { exact: true })).toBeDisabled();
+  await expect(page.getByRole("dialog").getByLabel("Responsável", { exact: true })).toBeDisabled();
   await page.getByLabel("Próximo passo", { exact: true }).fill("Confirmar a apresentação");
   await noOverflow(page);
   await page.getByRole("button", { name: "Salvar oportunidade", exact: true }).click();

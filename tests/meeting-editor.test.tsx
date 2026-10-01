@@ -19,6 +19,18 @@ function pdf() {
 function drop(file: File) { fireEvent.drop(screen.getByRole("button", { name: /Arraste a ata/ }), { dataTransfer: { files: [file] } }); }
 
 describe("Meeting entry", () => {
+  it("loads and edits the saved original transcript without losing its attachment", async () => {
+    const p = props({ initial: diagnostic }); const user = userEvent.setup(); render(<CompanyDiagnosticEditor {...p} />);
+    await user.click(screen.getByRole("button", { name: "Alterar" }));
+    const original = screen.getByLabelText("Texto ou transcrição (opcional)");
+    expect((original as HTMLTextAreaElement).value).toBe(diagnostic.business_details.raw_notes);
+    await user.clear(original); await user.type(original, "Transcrição revisada pelo usuário.");
+    await user.click(screen.getByRole("button", { name: /^Continuar$/ }));
+    await user.click(screen.getByRole("button", { name: "Salvar reunião" }));
+    await waitFor(() => expect(p.onSave).toHaveBeenCalledOnce());
+    expect(p.onSave.mock.calls[0][1]).toBe(diagnostic.id);
+    expect(p.onSave.mock.calls[0][0].business_details).toMatchObject({ raw_notes: "Transcrição revisada pelo usuário.", attachment_path: diagnostic.business_details.attachment_path });
+  });
   it("saves a simple meeting and an optional follow-up without advanced fields", async () => {
     const p = props(); const user = userEvent.setup(); render(<CompanyDiagnosticEditor {...p} />);
     await user.type(screen.getByLabelText("Texto ou transcrição (opcional)"), "Conversamos sobre uma parceria. Enviar apresentação.");
