@@ -52,7 +52,7 @@ import { currency, formatDate, initials, newId, safeExternalUrl, taskIsLate } fr
 import { fetchCrmData, fetchTeamAdminData } from "@/lib/crm-repository";
 
 const navItems = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "dashboard", label: "Visão geral", icon: LayoutDashboard },
   { id: "contacts", label: "Contatos", icon: Users },
   { id: "companies", label: "Empresas", icon: Building2 },
   { id: "pipeline", label: "Funil", icon: Target },
@@ -64,7 +64,7 @@ const navItems = [
 
 const emptyCompany = { name: "", website: "", instagram: "", segment: "", phone: "", city: "", observations: "" };
 const emptyContact = { name: "", company: "", title: "", phone: "", whatsapp: "", email: "", instagram: "", linkedin: "", source: "", assigned_to: "", notes: "" };
-const emptyOpportunity = { title: "", company_id: "", contact_id: "", stage: "Novo lead", amount: "", assigned_to: "", source: "", expected_close_at: "", notes: "", is_draft: false };
+const emptyOpportunity = { title: "", company_id: "", contact_id: "", stage: "Novo lead", amount: "", assigned_to: "", source: "", expected_close_at: "", notes: "", next_step: "", visibility: "team" as "team" | "personal", is_draft: false };
 const emptyTask = { title: "", kind: "Ligação", contact_id: "", company_id: "", opportunity_id: "", due_at: "", end_at: "", location: "", participants: "", agenda: "", reminder_at: "", meeting_status: "Agendada", priority: "Média", assigned_to: "", description: "" };
 const demoStorageKey = "vexo_crm_local_data_v1";
 
@@ -97,6 +97,7 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
   }, [supabasePublishableKey, supabaseUrl]);
 
   const [session, setSession] = useState<Session | null>(null);
+  const sessionUserId = session?.user.id;
   const [authLoading, setAuthLoading] = useState(Boolean(supabase));
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [accessError, setAccessError] = useState<string | null>(null);
@@ -194,14 +195,14 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
   }, [supabase]);
 
   const loadMembership = useCallback(async () => {
-    if (!supabase || !session?.user) {
+    if (!supabase || !sessionUserId) {
       setWorkspace(null);
       setWorkspaceLoading(false);
       return;
     }
     setWorkspaceLoading(true);
     setAccessError(null);
-    let { data: member, error: memberError } = await supabase.from("workspace_members").select("workspace_id,role").eq("user_id", session.user.id).maybeSingle();
+    let { data: member, error: memberError } = await supabase.from("workspace_members").select("workspace_id,role").eq("user_id", sessionUserId).maybeSingle();
 
     const pendingInvite = window.localStorage.getItem("crm_pending_invite");
     if (!member && !memberError && pendingInvite) {
@@ -211,7 +212,7 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
       if (!inviteError) {
         window.localStorage.removeItem("crm_pending_invite");
         toast.success("Você entrou no CRM compartilhado");
-        const result = await supabase.from("workspace_members").select("workspace_id,role").eq("user_id", session.user.id).maybeSingle();
+        const result = await supabase.from("workspace_members").select("workspace_id,role").eq("user_id", sessionUserId).maybeSingle();
         member = result.data;
         memberError = result.error;
       } else {
@@ -253,7 +254,7 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
     setWorkspaceName((workspaceData as Workspace).name);
     await loadWorkspaceData((workspaceData as Workspace).id);
     setWorkspaceLoading(false);
-  }, [supabase, session, loadWorkspaceData, loadTeamData]);
+  }, [supabase, sessionUserId, loadWorkspaceData, loadTeamData]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -297,9 +298,12 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
   useEffect(() => {
     // A consulta assíncrona é a sincronização da sessão com o backend protegido por RLS.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (session?.user) void loadMembership();
+    if (sessionUserId) void loadMembership();
     else {
       setWorkspace(null);
+      setDiagnosticEditor(null);
+      setDetailCompanyId(null);
+      setModal(null);
       setContacts([]);
       setCompanies([]);
       setOpportunities([]);
@@ -312,12 +316,36 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
       setInvites([]);
       setTeamAudit([]);
     }
-  }, [session?.user, loadMembership]);
+  }, [sessionUserId, loadMembership]);
 
   useEffect(() => {
     if (!demoMode) return;
     window.localStorage.setItem(demoStorageKey, JSON.stringify({ companies, contacts, opportunities, tasks, interactions, columns, activities, diagnostics }));
   }, [demoMode, companies, contacts, opportunities, tasks, interactions, columns, activities, diagnostics]);
+
+  const draftScope = workspace && user ? workspace.id + ":" + user.id : "";
+  useEffect(() => {
+    if (!draftScope || workspaceLoading) return;
+    try {
+      const saved = window.sessionStorage.getItem("stormfy:open-meeting:" + draftScope);
+      if (!saved) return;
+      const context = JSON.parse(saved) as { companyId?: string; contactId?: string; itemId?: string; meetingId?: string };
+      if (context.companyId && !companies.some((item) => item.id === context.companyId)) return;
+      const item = diagnostics.find((item) => item.id === context.itemId);
+      const meeting = tasks.find((item) => item.id === context.meetingId);
+      if ((context.itemId && !item) || (context.meetingId && !meeting)) return;
+      // Browser storage hydration must run after the authenticated workspace is available.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setDiagnosticEditor({ companyId: context.companyId, contactId: context.contactId, item, meeting });
+    } catch { /* An unavailable browser store never blocks the CRM. */ }
+    // Recover only after the workspace finishes loading, never on data refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftScope, workspaceLoading]);
+
+  const closeDiagnostic = () => {
+    setDiagnosticEditor(null);
+    try { window.sessionStorage.removeItem("stormfy:open-meeting:" + draftScope); } catch {}
+  };
 
   const refreshData = async () => {
     if (workspace) await loadWorkspaceData(workspace.id);
@@ -393,6 +421,7 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
     setModal(null);
     setDetailCompanyId(null);
     setDiagnosticEditor({ companyId, contactId, item, meeting });
+    try { window.sessionStorage.setItem("stormfy:open-meeting:" + draftScope, JSON.stringify({ companyId, contactId, itemId: item?.id, meetingId: meeting?.id })); } catch {}
   };
 
   const openMeetingAttachment = async (path: string) => {
@@ -428,7 +457,7 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
   };
 
   const createOpportunityFromDiagnosis = (diagnostic: CompanyDiagnostic, idea: DiagnosticIdea) => {
-    setOpportunityForm({ ...emptyOpportunity, title: idea.title, company_id: diagnostic.company_id,
+    setOpportunityForm({ ...emptyOpportunity, title: idea.title, next_step: idea.next_step || "", company_id: diagnostic.company_id,
       contact_id: diagnostic.contact_id || "", stage: idea.stage || "Novo lead", amount: idea.amount || "",
       assigned_to: idea.assigned_to || diagnostic.responsible || "", source: "Diagnóstico de visita",
       expected_close_at: idea.due_at || "", notes: [idea.description, idea.next_step && `Próximo passo: ${idea.next_step}`, idea.notes].filter(Boolean).join("\n"), is_draft: false });
@@ -598,7 +627,7 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
     setEditingOpportunityId(opportunity.id);
     setOpportunityForm({ title: opportunity.title, company_id: opportunity.company_id || "", contact_id: opportunity.contact_id || "",
       stage: opportunity.stage, amount: String(opportunity.amount), assigned_to: opportunity.assigned_to || "",
-      source: opportunity.source || "", expected_close_at: opportunity.expected_close_at || "", notes: opportunity.notes || "", is_draft: Boolean(opportunity.is_draft) });
+      source: opportunity.source || "", expected_close_at: opportunity.expected_close_at || "", notes: opportunity.notes || "", next_step: opportunity.next_step || "", visibility: opportunity.visibility || "team", is_draft: Boolean(opportunity.is_draft) });
     setModal("opportunity");
   };
 
@@ -835,9 +864,12 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
       return;
     }
     const isDraft = saveAsDraft;
+    const visibility = opportunityForm.visibility;
+    const ownerUserId = visibility === "personal" ? user?.id : opportunities.find((item) => item.id === editingOpportunityId)?.owner_user_id || user?.id;
+    const assignedTo = visibility === "personal" ? members.find((item) => item.user_id === user?.id)?.display_name || user?.user_metadata?.full_name || user?.email || "" : opportunityForm.assigned_to;
     if (demoMode) {
       const existing = opportunities.find((item) => item.id === editingOpportunityId);
-      const values: Opportunity = { id: editingOpportunityId || newId(), workspace_id: workspace.id, title: opportunityForm.title.trim(), company_id: opportunityForm.company_id || null, contact_id: opportunityForm.contact_id || null, stage: opportunityForm.stage, amount: Number(opportunityForm.amount || 0), assigned_to: opportunityForm.assigned_to || null, source: opportunityForm.source || null, expected_close_at: opportunityForm.expected_close_at || null, notes: opportunityForm.notes || null, created_at: existing?.created_at || new Date().toISOString(), is_draft: isDraft };
+      const values: Opportunity = { id: editingOpportunityId || newId(), workspace_id: workspace.id, title: opportunityForm.title.trim(), company_id: opportunityForm.company_id || null, contact_id: opportunityForm.contact_id || null, stage: opportunityForm.stage, amount: Number(opportunityForm.amount || 0), visibility, owner_user_id: ownerUserId, next_step: opportunityForm.next_step || null, assigned_to: assignedTo || null, source: opportunityForm.source || null, expected_close_at: opportunityForm.expected_close_at || null, notes: opportunityForm.notes || null, created_at: existing?.created_at || new Date().toISOString(), is_draft: isDraft };
       setOpportunities((current) => editingOpportunityId ? current.map((item) => item.id === editingOpportunityId ? values : item) : [values, ...current]);
       toast.success(isDraft ? "Rascunho salvo neste navegador" : "Oportunidade salva neste navegador");
       closeModal();
@@ -848,7 +880,8 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
     const values = {
       workspace_id: workspace.id, title: opportunityForm.title.trim(), company_id: opportunityForm.company_id || null,
       contact_id: opportunityForm.contact_id || null, stage: opportunityForm.stage, amount: Number(opportunityForm.amount || 0),
-      assigned_to: opportunityForm.assigned_to || null, source: opportunityForm.source || null,
+      visibility, owner_user_id: ownerUserId, next_step: opportunityForm.next_step || null,
+      assigned_to: assignedTo || null, source: opportunityForm.source || null,
       expected_close_at: opportunityForm.expected_close_at || null, notes: opportunityForm.notes || null, is_draft: isDraft,
     };
     const { error } = editingOpportunityId
@@ -1250,28 +1283,27 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
             <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar no CRM" aria-label="Buscar contato, empresa ou tarefa" className="h-10 min-w-0 rounded-lg border-slate-200 bg-slate-50 pl-9 sm:placeholder:text-sm" />
           </div>
-          <Button type="button" variant="outline" className="hidden h-10 border-slate-200 bg-white sm:inline-flex" onClick={() => setModal("interaction")}><Activity className="size-4 text-[#173052]" /> Registrar interação</Button>
-          <Button type="button" className="h-10 shrink-0 bg-[#173052] px-3 text-white hover:bg-[#10233f] sm:px-4" aria-label="Novo contato" onClick={() => setModal("contact")}><Plus className="size-4" /><span className="hidden sm:inline">Novo contato</span></Button>
+          {canEdit && <Button type="button" className="hidden h-11 shrink-0 bg-[#173052] px-4 text-white hover:bg-[#10233f] md:inline-flex" onClick={() => openDiagnostic()}><Plus className="size-4" /> Registrar reunião</Button>}
         </header>
-        <div className="mx-auto w-full min-w-0 max-w-[1600px] px-3 py-5 sm:px-7 sm:py-8">
+        <div className="mx-auto w-full min-w-0 max-w-[1600px] px-4 pb-44 pt-5 sm:px-7 sm:pt-8 md:pb-8">
           {dataError && <div role="alert" className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800"><span>{dataError}</span><Button type="button" variant="outline" onClick={() => void refreshData()}>Tentar novamente</Button></div>}
           <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div><p className="text-sm font-medium text-[#173052]">CRM comercial</p><h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 sm:text-[28px]">{navItems.find((item) => item.id === activeView)?.label}</h1><p className="mt-1 text-sm text-slate-500">Acompanhe a conversa e mantenha o próximo passo definido.</p></div>
+            <div><p className="text-xs font-medium uppercase tracking-[.16em] text-[#947845]">Relacionamentos que movem negócios</p><h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 sm:text-[28px]">{navItems.find((item) => item.id === activeView)?.label}</h1><p className="mt-1 text-sm text-slate-500">Cada conversa com contexto. Cada relacionamento com um próximo passo.</p></div>
             <div className="flex flex-wrap gap-2 max-sm:[&>button]:flex-1">
               <Button type="button" variant="outline" className="border-slate-200 bg-white" onClick={() => activeView === "calendar" ? openMeetingForm() : setModal("task")}><CalendarClock className="size-4 text-[#173052]" /> {activeView === "calendar" ? "Agendar reunião" : "Agendar follow-up"}</Button>
-              {activeView === "pipeline" && <Button type="button" className="bg-[#173052] text-white hover:bg-[#10233f]" onClick={() => setModal("opportunity")}><Plus className="size-4" /> Nova oportunidade</Button>}
             </div>
           </div>
 
-          {activeView === "dashboard" && <DashboardView contacts={contacts} companies={companies.filter((item) => !item.archived_at)} opportunities={opportunities} tasks={tasks.filter((item) => !item.archived_at)} interactions={interactions} activities={activities} diagnostics={diagnostics} onView={(view) => { if (view === "tasks") setTaskStatusFilter("Pendente"); setActiveView(view); }} onCreateTask={() => setModal("task")} onCreateMeeting={() => openMeetingForm()} onCreateActivity={() => { setActiveView("activities"); setActivityCreateRequest((current) => current + 1); }} onCreateCompany={() => setModal("company")} onCreateDiagnostic={() => openDiagnostic()} onCompanyDetail={(id) => setDetailCompanyId(id)} onCompleteTask={registerTaskResult} onCreateOpportunity={() => setModal("opportunity")} onCreateContact={() => setModal("contact")} onCreateInteraction={() => setModal("interaction")} onContactDetail={(id) => { setDetailContactId(id); setModal("contactDetail"); }} onOpportunityDetail={(id) => { setDetailOpportunityId(id); setModal("opportunityDetail"); }} onOpenStage={(stage) => { setOpportunityStageFilter(stage); setOpportunityAssignedFilter(""); setActiveView("pipeline"); }} />}
+          {activeView === "dashboard" && <DashboardView canEdit={canEdit} contacts={contacts} companies={companies.filter((item) => !item.archived_at)} opportunities={opportunities} tasks={tasks.filter((item) => !item.archived_at)} interactions={interactions} activities={activities} diagnostics={diagnostics} onView={(view) => { if (view === "tasks") setTaskStatusFilter("Pendente"); setActiveView(view); }} onCreateTask={() => setModal("task")} onCreateMeeting={() => openMeetingForm()} onCreateActivity={() => { setActiveView("activities"); setActivityCreateRequest((current) => current + 1); }} onCreateCompany={() => setModal("company")} onCreateDiagnostic={() => openDiagnostic()} onCompanyDetail={(id) => setDetailCompanyId(id)} onCompleteTask={registerTaskResult} onCreateOpportunity={() => setModal("opportunity")} onCreateContact={() => setModal("contact")} onCreateInteraction={() => setModal("interaction")} onContactDetail={(id) => { setDetailContactId(id); setModal("contactDetail"); }} onOpportunityDetail={(id) => { setDetailOpportunityId(id); setModal("opportunityDetail"); }} onOpenStage={(stage) => { setOpportunityStageFilter(stage); setOpportunityAssignedFilter(""); setActiveView("pipeline"); }} />}
 {(activeView === "contacts" || activeView === "companies") && <ContactsView key={activeView} initialTab={activeView === "companies" ? "companies" : "people"} contacts={activeView === "companies" ? contacts : filteredContacts} diagnostics={diagnostics} tasks={tasks} canEdit={canEdit} companies={companies.filter((item) => !search.trim() || item.name.toLowerCase().includes(search.trim().toLowerCase()))} companyFilter={contactCompanyFilter} setCompanyFilter={setContactCompanyFilter} sourceFilter={contactSourceFilter} setSourceFilter={setContactSourceFilter} sources={[...new Set(contacts.map((item) => item.source).filter((value): value is string => Boolean(value)))]} onCreate={() => setModal("contact")} onCreateCompany={() => setModal("company")} onEditCompany={editCompany} onCompanyDetail={(id) => setDetailCompanyId(id)} onRegisterVisit={(id) => openDiagnostic(id)} onContactVisit={(companyId, contactId) => openDiagnostic(companyId,contactId)} onArchiveCompany={(item) => archiveRecord("companies", item.id, item.name)} onRestoreCompany={restoreCompany} onEdit={editContact} onArchive={(item) => archiveRecord("contacts", item.id, item.name)} onDetail={(id) => { setDetailContactId(id); setModal("contactDetail"); }} onWhatsApp={openWhatsApp} onImport={importInitialContacts} importing={importing} onAddInteraction={(contactId) => { setInteractionForm((current) => ({ ...current, contact_id: contactId })); setModal("interaction"); }} onAddTask={(contactId) => { setTaskForm((current) => ({ ...current, contact_id: contactId })); setModal("task"); }} />}
-          {activeView === "pipeline" && <PipelineView opportunities={filteredOpportunities} contacts={contactById} companies={companyById} draggedId={draggedOpportunity} setDraggedId={setDraggedOpportunity} onMove={updateOpportunityStage} onCreate={() => setModal("opportunity")} onEdit={editOpportunity} onDetail={(id) => { setDetailOpportunityId(id); setModal("opportunityDetail"); }} onToggleDraft={toggleOpportunityDraft} onDelete={deleteOpportunity} stageFilter={opportunityStageFilter} setStageFilter={setOpportunityStageFilter} assignedFilter={opportunityAssignedFilter} setAssignedFilter={setOpportunityAssignedFilter} assignees={[...new Set(opportunities.map((item) => item.assigned_to).filter((value): value is string => Boolean(value)))]} />}
+          {activeView === "pipeline" && <PipelineView canEdit={canEdit} tasks={tasks} interactions={interactions} opportunities={filteredOpportunities} contacts={contactById} companies={companyById} draggedId={draggedOpportunity} setDraggedId={setDraggedOpportunity} onMove={updateOpportunityStage} onCreate={() => setModal("opportunity")} onEdit={editOpportunity} onDetail={(id) => { setDetailOpportunityId(id); setModal("opportunityDetail"); }} onToggleDraft={toggleOpportunityDraft} onDelete={deleteOpportunity} stageFilter={opportunityStageFilter} setStageFilter={setOpportunityStageFilter} assignedFilter={opportunityAssignedFilter} setAssignedFilter={setOpportunityAssignedFilter} assignees={[...new Set(opportunities.map((item) => item.assigned_to).filter((value): value is string => Boolean(value)))]} />}
           {activeView === "tasks" && <TasksView tasks={filteredTasks} contacts={contactById} opportunities={opportunityById} onCreate={() => setModal("task")} onComplete={registerTaskResult} onEdit={editTask} onCancel={cancelTask} statusFilter={taskStatusFilter} setStatusFilter={setTaskStatusFilter} />}
           {activeView === "activities" && <ActivityBoard columns={columns} activities={activities} contacts={contacts} companies={companies} opportunities={opportunities} userId={user?.id || ""} canEdit={canEdit} isSuperadmin={role === "superadmin"} createRequestToken={activityCreateRequest} busy={busy} onSave={saveBoardActivity} onRemove={removeBoardActivity} onSaveColumn={saveBoardColumn} onRemoveColumn={archiveBoardColumn} onAddComment={addBoardComment} />}
           {activeView === "calendar" && <CalendarView tasks={tasks} contacts={contactById} companies={companyById} opportunities={opportunityById} onCreateMeeting={openMeetingForm} onEdit={editTask} onComplete={completeTask} onCancel={cancelTask} onArchive={archiveMeeting} onDelete={deleteMeeting} canEdit={canEdit} canDelete={role === "superadmin" || role === "admin"} onOpenRelated={(task) => { if (task.opportunity_id) { setDetailOpportunityId(task.opportunity_id); setModal("opportunityDetail"); } else if (task.contact_id) { setDetailContactId(task.contact_id); setModal("contactDetail"); } }} />}
           {activeView === "team" && <TeamManagement workspace={workspace} members={members} invites={invites} audit={teamAudit} role={role} userId={user?.id || ""} email={user?.email || ""} inviteEmail={inviteEmail} inviteRole={inviteRole} setInviteEmail={setInviteEmail} setInviteRole={setInviteRole} onInvite={createInvite} onChangeRole={changeMemberRole} onRemove={removeMember} onRevoke={revokeInvite} busy={busy} demo={demoMode} />}
         </div>
       </SidebarInset>
+      <MobileCrmNavigation activeView={activeView} onView={(view) => { setActiveView(view); setSearch(""); }} canEdit={canEdit} onRegister={() => openDiagnostic()} />
 
       <Dialog open={!demoMode && Boolean(workspace) && !workspaceLoading && localBackupCount > 0 && recoveryDialogOpen} onOpenChange={setRecoveryDialogOpen}>
         <DialogContent className="sm:max-w-lg">
@@ -1297,10 +1329,10 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
     {diagnosticEditor && <CompanyDiagnosticEditor key={diagnosticEditor.item?.id || diagnosticEditor.meeting?.id || `${diagnosticEditor.companyId || "new"}-${diagnosticEditor.contactId || ""}`} initial={diagnosticEditor.item} meeting={diagnosticEditor.meeting}
       companyId={diagnosticEditor.companyId} contactId={diagnosticEditor.contactId}
       companies={companies} contacts={contacts} responsible={user?.user_metadata?.full_name || ""} authToken={session?.access_token} aiEnabled={aiEnabled}
-      onSave={saveDiagnostic} onQuickCreate={quickCreateCompany} onClose={() => setDiagnosticEditor(null)} />}
+      draftScope={draftScope} onSave={saveDiagnostic} onQuickCreate={quickCreateCompany} onClose={closeDiagnostic} />}
 
     <Dialog open={Boolean(detailCompanyId)} onOpenChange={(open) => { if (!open) setDetailCompanyId(null); }}>
-      <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-4xl">
+      <DialogContent className="max-h-[94vh] overflow-y-auto bg-[#faf8f3] sm:max-w-5xl">
         <DialogHeader><DialogTitle>{companies.find((item) => item.id === detailCompanyId)?.name || "Empresa"}</DialogTitle>
           <DialogDescription>Negócio, visitas, oportunidades e próximos passos em um só lugar.</DialogDescription></DialogHeader>
         {detailCompanyId && companies.find((item) => item.id === detailCompanyId) && <CompanyProfile key={detailCompanyId}
@@ -1308,10 +1340,12 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
           contacts={contacts.filter((item) => item.company_id === detailCompanyId)}
           diagnostics={diagnostics.filter((item) => item.company_id === detailCompanyId)}
           opportunities={relatedOpportunities(detailCompanyId)}
-          tasks={tasks.filter((item) => item.company_id === detailCompanyId || contacts.some((c) => c.company_id === detailCompanyId && c.id === item.contact_id))}
+          tasks={tasks.filter((item) => item.company_id === detailCompanyId || contacts.some((c) => c.company_id === detailCompanyId && c.id === item.contact_id) || relatedOpportunities(detailCompanyId).some((opportunity) => opportunity.id === item.opportunity_id))}
           interactions={interactions.filter((item) => contacts.some((c) => c.company_id === detailCompanyId && c.id === item.contact_id) || relatedOpportunities(detailCompanyId).some((o) => o.id === item.opportunity_id))}
           canEdit={canEdit} onRegister={(meeting) => openDiagnostic(detailCompanyId,meeting?.contact_id || undefined,undefined,meeting)} onEditDiagnostic={(item) => openDiagnostic(item.company_id,item.contact_id || undefined,item)}
           onArchiveDiagnostic={(item) => { if (window.confirm("Arquivar este diagnóstico? Ele continuará no histórico da empresa.")) void saveDiagnostic({ ...diagnosticFormFromRecord(item), status: "archived", schedule_task: false },item.id); }}
+          onNewOpportunity={() => { setOpportunityForm({ ...emptyOpportunity, company_id: detailCompanyId }); setDetailCompanyId(null); setModal("opportunity"); }}
+          onOpportunityDetail={(id) => { setDetailCompanyId(null); setDetailOpportunityId(id); setModal("opportunityDetail"); }}
           onOpenAttachment={openMeetingAttachment}
           onCreateOpportunity={createOpportunityFromDiagnosis}
           onAddTask={(contactId) => { setTaskForm({ ...emptyTask, company_id: detailCompanyId, contact_id: contactId || "", title: `Retomar contato — ${companies.find((c) => c.id === detailCompanyId)?.name || "empresa"}` }); setDetailCompanyId(null); setModal("task"); }}
@@ -1370,10 +1404,13 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
             <Field label="Contato"><NativeSelect value={opportunityForm.contact_id} onChange={(event) => setOpportunityForm({ ...opportunityForm, contact_id: event.target.value })}><option value="">Sem contato selecionado</option>{contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.name}</option>)}</NativeSelect></Field>
             <Field label="Etapa"><NativeSelect value={opportunityForm.stage} onChange={(event) => setOpportunityForm({ ...opportunityForm, stage: event.target.value })}>{stages.map((stage) => <option key={stage}>{stage}</option>)}</NativeSelect></Field>
             <Field label="Valor estimado (R$)"><Input type="number" min="0" step="0.01" value={opportunityForm.amount} onChange={(event) => setOpportunityForm({ ...opportunityForm, amount: event.target.value })} placeholder="0" /></Field>
-            <Field label="Responsável"><Input value={opportunityForm.assigned_to} onChange={(event) => setOpportunityForm({ ...opportunityForm, assigned_to: event.target.value })} placeholder={user?.email || "Ismael ou Rudy"} /></Field>
+            <Field label="Responsável"><Input disabled={opportunityForm.visibility === "personal"} value={opportunityForm.visibility === "personal" ? members.find((item) => item.user_id === user?.id)?.display_name || user?.user_metadata?.full_name || user?.email || "" : opportunityForm.assigned_to} onChange={(event) => setOpportunityForm({ ...opportunityForm, assigned_to: event.target.value })} placeholder={user?.email || "Ismael ou Rudy"} /></Field>
             <Field label="Previsão de fechamento"><Input type="date" value={opportunityForm.expected_close_at} onChange={(event) => setOpportunityForm({ ...opportunityForm, expected_close_at: event.target.value })} /></Field>
             <Field label="Origem"><Input value={opportunityForm.source} onChange={(event) => setOpportunityForm({ ...opportunityForm, source: event.target.value })} placeholder="Como surgiu a oportunidade" /></Field>
           </div>
+          <Field label="Quem pode ver esta oportunidade?"><NativeSelect value={opportunityForm.visibility} onChange={(event) => setOpportunityForm({ ...opportunityForm, visibility: event.target.value as "team" | "personal" })}><option value="team">Equipe autorizada</option><option value="personal">Pessoal — somente eu</option></NativeSelect></Field>
+          <p className="text-xs leading-5 text-slate-500">{opportunityForm.visibility === "personal" ? "Somente você terá acesso a esta oportunidade e aos registros vinculados a ela. O perfil da empresa continua compartilhado." : "Visível aos membros autorizados da equipe."}</p>
+          <Field label="Próximo passo"><Input value={opportunityForm.next_step} onChange={(event) => setOpportunityForm({ ...opportunityForm, next_step: event.target.value })} placeholder="O que precisa acontecer para avançar?" /></Field>
           <Field label="Observações"><Textarea rows={3} value={opportunityForm.notes} onChange={(event) => setOpportunityForm({ ...opportunityForm, notes: event.target.value })} placeholder="Contexto, escopo ou próximos passos" /></Field>
           <DialogFooter className="flex-wrap"><Button type="button" variant="outline" onClick={closeModal}>Cancelar</Button><Button type="button" variant="outline" disabled={busy} className="border-[#d2ba84] text-[#173052]" onClick={() => void addOpportunity(undefined, true)}><Pencil className="size-4" /> Salvar rascunho</Button><Button type="submit" disabled={busy} className="bg-[#173052] text-white hover:bg-[#10233f]">{busy ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />} {opportunityForm.is_draft ? "Publicar oportunidade" : "Salvar oportunidade"}</Button></DialogFooter>
         </form>
@@ -1456,6 +1493,17 @@ export default function CrmApp({ supabaseUrl, supabasePublishableKey, aiEnabled 
       </DialogContent>
     </Dialog>
   </>;
+}
+
+function MobileCrmNavigation({ activeView, onView, canEdit, onRegister }: { activeView: View; onView: (view: View) => void; canEdit: boolean; onRegister: () => void }) {
+  const { setOpenMobile } = useSidebar();
+  return <div className="fixed inset-x-0 bottom-0 z-30 md:hidden">
+    {canEdit && <div className="pointer-events-none flex justify-end px-4 pb-3"><Button className="pointer-events-auto h-12 rounded-full bg-[#173052] px-5 text-white shadow-lg" onClick={onRegister}><Plus className="size-4" /> Registrar reunião</Button></div>}
+    <nav aria-label="Navegação principal no celular" className="grid grid-cols-5 border-t border-[#e7e1d6] bg-[#fffdfa] px-1 pb-[max(.5rem,env(safe-area-inset-bottom))] pt-2">
+      {([{ id: "dashboard", label: "Início", icon: LayoutDashboard }, { id: "companies", label: "Empresas", icon: Building2 }, { id: "pipeline", label: "Funil", icon: Target }, { id: "calendar", label: "Agenda", icon: CalendarDays }] as const).map(({ id, label, icon: Icon }) => <button key={id} aria-current={activeView === id ? "page" : undefined} className={"flex min-h-12 flex-col items-center justify-center gap-1 rounded-xl text-[11px] " + (activeView === id ? "bg-[#eee4d0] font-semibold text-[#173052]" : "text-slate-500")} onClick={() => onView(id)}><Icon className="size-5" />{label}</button>)}
+      <button className="flex min-h-12 flex-col items-center justify-center gap-1 text-[11px] text-slate-500" onClick={() => setOpenMobile(true)}><PanelsTopLeft className="size-5" />Mais</button>
+    </nav>
+  </div>;
 }
 
 function CrmNavigation({ activeView, setActiveView, clearSearch, lateCount }: { activeView: View; setActiveView: (view: View) => void; clearSearch: () => void; lateCount: number }) {

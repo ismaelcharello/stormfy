@@ -100,7 +100,29 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+.crm-card {
+  min-width: 0;
+  border-radius: 1rem;
+  background: #fff;
+  padding: 1.25rem;
+  box-shadow: 0 2px 12px rgb(16 35 63 / 3%);
+}
+
+button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, a:focus-visible, summary:focus-visible {
+  outline: 2px solid #a8864b;
+  outline-offset: 3px;
+}
+[data-slot="button"] { transition: background-color 150ms ease, transform 120ms ease-out; }
+[data-slot="button"]:active:not(:disabled) { transform: scale(.98); }
+[data-slot="dialog-content"] { overflow-wrap: anywhere; }
+[data-slot="dialog-close"] { display: grid; place-items: center; width: 2.75rem; height: 2.75rem; top: .5rem; right: .5rem; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
+
 @media (max-width: 639px) {
-  input, select, textarea { font-size: 16px; }
+  input, select, textarea { font-size: 16px !important; min-width: 0; }
+  [data-slot="button"], [data-slot="native-select"], [data-slot="input"] { min-height: 44px; }
   main, [data-slot="sidebar-inset"] { min-width: 0; }
 }

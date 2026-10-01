@@ -1,102 +1,110 @@
 "use client";
 
-import { useState } from "react";
-import { Activity, CalendarClock, CalendarDays, FileText, MapPin, MessageCircle, Pencil, Plus, Target, Users } from "lucide-react";
+import { useId, useState } from "react";
+import { ArrowUpRight, Building2, CalendarClock, FileText, MessageCircle, Pencil, Plus, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { HistoryTimeline } from "@/components/crm/views";
 import type { Company, CompanyDiagnostic, Contact, DiagnosticIdea, Interaction, Opportunity, Task } from "@/lib/crm-types";
 import { currency, formatDate, safeExternalUrl, taskIsLate } from "@/lib/crm-utils";
+import { companyKnowledge, isPendingTask, latestDate } from "@/lib/crm-insights";
 
-const systemBusinessKeys = ["visit_time_known", "attachment_path", "attachment_name", "source_meeting_id", "source_meeting_title"];
+const tabs = [["overview", "Visão geral"], ["history", "Histórico"], ["opportunities", "Oportunidades"], ["meetings", "Reuniões e atas"], ["connections", "Conexões"], ["data", "Dados da empresa"]] as const;
+const businessLabels: Record<string, string> = { contact_title: "Cargo do contato", history: "História e operação", years: "Tempo de mercado", region: "Região", segment: "Segmento", products: "Produtos e serviços", audience: "Público", model: "Modelo de negócio", differentials: "Diferenciais", acquisition: "Aquisição de clientes", sales: "Operação comercial", channels: "Canais", size: "Porte", digital: "Presença digital", employees: "Equipe", other: "Outros detalhes" };
 
 export function CompanyProfile({ company, contacts, diagnostics, opportunities, tasks, interactions, canEdit,
-  onRegister, onEditDiagnostic, onArchiveDiagnostic, onCreateOpportunity, onAddTask, onAddInteraction, onEditCompany, onOpenAttachment }: {
+  onRegister, onEditDiagnostic, onArchiveDiagnostic, onCreateOpportunity, onNewOpportunity, onOpportunityDetail, onAddTask, onAddInteraction, onEditCompany, onOpenAttachment }: {
   company: Company; contacts: Contact[]; diagnostics: CompanyDiagnostic[]; opportunities: Opportunity[];
   tasks: Task[]; interactions: Interaction[]; canEdit: boolean;
   onRegister: (meeting?: Task) => void; onEditDiagnostic: (item: CompanyDiagnostic) => void;
   onArchiveDiagnostic: (item: CompanyDiagnostic) => void;
   onCreateOpportunity: (item: CompanyDiagnostic, idea: DiagnosticIdea) => void;
+  onNewOpportunity: () => void; onOpportunityDetail: (id: string) => void;
   onAddTask: (contactId?: string) => void; onAddInteraction: (contactId?: string) => void;
   onEditCompany: () => void; onOpenAttachment: (path: string) => void;
 }) {
-  const [tab, setTab] = useState<"overview" | "meetings" | "history" | "people">("overview");
-  const sortedDiagnostics = [...diagnostics].sort((a,b) => new Date(b.visit_at).getTime() - new Date(a.visit_at).getTime());
-  const current = sortedDiagnostics.find((item) => item.status === "completed");
-  const openDeals = opportunities.filter((item) => !item.is_draft && !["Ganho","Perdido"].includes(item.stage));
-  const pending = tasks.filter((item) => item.status === "Pendente" && !item.archived_at).sort((a,b) => new Date(a.due_at).getTime() - new Date(b.due_at).getTime());
-  const next = pending[0];
-  const firstContact = contacts[0];
-  const companySummary = current?.business_details || {};
-  const meetingTasks = tasks.filter((item) => item.kind === "Reunião" && !item.archived_at).sort((a,b) => new Date(b.due_at).getTime() - new Date(a.due_at).getTime());
-  const linkedMeetingIds = new Set(diagnostics.map((item) => item.business_details?.source_meeting_id).filter(Boolean));
-  const meetingsWithoutMinutes = meetingTasks.filter((item) => !linkedMeetingIds.has(item.id));
-  const businessLabels: Record<string,string> = {
-    contact_title:"Cargo da pessoa visitada", history:"História", years:"Tempo de mercado", region:"Região", segment:"Segmento",
-    products:"Produtos e serviços", audience:"Público-alvo", model:"Modelo de negócio", differentials:"Diferenciais",
-    acquisition:"Aquisição de clientes", sales:"Operação comercial", channels:"Canais", size:"Porte informado",
-    digital:"Presença digital", employees:"Equipe informada", other:"Outros detalhes", raw_notes:"Relato original",
-  };
-  const visibleBusinessDetails = (details: Record<string,string>) => Object.entries(details).filter(([key,value]) => !systemBusinessKeys.includes(key) && Boolean(value));
-  const contactName = (id?: string | null) => contacts.find((item) => item.id === id)?.name;
-  const items = [
-    ...diagnostics.map((d) => ({ id: `diagnostic-${d.id}`, when: d.visit_at, withTime: d.business_details?.visit_time_known !== "false", kind: d.visit_kind,
-      title: d.status === "draft" ? "Ata em rascunho" : d.summary, detail: d.next_action ? `Próximo passo: ${d.next_action}` : "", assignee: d.responsible || "Sem responsável" })),
-    ...interactions.map((i) => ({ id: `interaction-${i.id}`, when: i.occurred_at, withTime: true, kind: i.kind,
-      title: i.summary, detail: i.result ? `Próximo passo: ${i.result}` : "", assignee: "Equipe" })),
-    ...tasks.map((t) => ({ id: `task-${t.id}`, when: t.completed_at || t.created_at, withTime: true, kind: t.kind === "Reunião" ? "Reunião agendada" : t.status === "Concluída" ? "Follow-up concluído" : "Follow-up agendado",
-      title: t.title, detail: `Prazo: ${formatDate(t.due_at,true)}`, assignee: t.assigned_to || "Sem responsável" })),
-    ...opportunities.map((o) => ({ id: `opportunity-${o.id}`, when: o.created_at, withTime: true, kind: "Oportunidade",
-      title: o.title, detail: o.stage, assignee: o.assigned_to || "Sem responsável" })),
-  ].sort((a,b) => new Date(b.when).getTime() - new Date(a.when).getTime());
+  const [tab, setTab] = useState<(typeof tabs)[number][0]>("overview");
+  const panelId = useId();
+  const { current, details, painsSource, desiresSource, ideas } = companyKnowledge(diagnostics);
+  const sorted = [...diagnostics].sort((a, b) => new Date(b.visit_at).getTime() - new Date(a.visit_at).getTime());
+  const openDeals = opportunities.filter((item) => !item.is_draft && !["Ganho", "Perdido"].includes(item.stage));
+  const next = tasks.filter(isPendingTask).sort((a, b) => new Date(a.due_at).getTime() - new Date(b.due_at).getTime())[0];
+  const primaryContact = contacts.find((item) => item.id === current?.contact_id) || contacts[0];
+  const lastContact = latestDate([current?.visit_at, ...interactions.map((item) => item.occurred_at), ...tasks.filter((item) => item.status === "Concluída").map((item) => item.completed_at)]);
+  const linkedMeetings = new Set(diagnostics.map((item) => item.business_details.source_meeting_id).filter(Boolean));
+  const withoutMinutes = tasks.filter((item) => item.kind === "Reunião" && !item.archived_at && item.meeting_status !== "Cancelada" && item.status !== "Cancelada" && !linkedMeetings.has(item.id));
+  const editable = canEdit && !company.archived_at;
+  const timeline = [
+    ...diagnostics.map((item) => ({ id: "meeting-" + item.id, date: item.visit_at, kind: item.status === "draft" ? "Ata em rascunho" : item.status === "archived" ? "Ata arquivada" : item.visit_kind, title: item.summary || "Reunião sem resumo", detail: item.next_action, attachment: item.business_details.attachment_path })),
+    ...interactions.map((item) => ({ id: "interaction-" + item.id, date: item.occurred_at, kind: item.kind === "Nota" ? "Observação" : item.kind, title: item.summary, detail: item.result, attachment: undefined })),
+    ...tasks.map((item) => ({ id: "task-" + item.id, date: item.completed_at || item.created_at, kind: item.kind + " · " + item.status, title: item.title, detail: "Prazo: " + formatDate(item.due_at, true), attachment: undefined })),
+    ...opportunities.map((item) => ({ id: "deal-" + item.id, date: item.created_at, kind: item.is_draft ? "Oportunidade em rascunho" : "Oportunidade", title: item.title, detail: item.stage, attachment: undefined })),
+  ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-  return <div className="space-y-5">
-    <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600"><span>{company.segment || "Segmento a preencher"}{company.city ? ` · ${company.city}` : ""}</span>{company.phone && <span>{company.phone}</span>}{safeExternalUrl(company.website) && <a className="text-[#173052] underline" href={safeExternalUrl(company.website)!} target="_blank" rel="noopener noreferrer">Site</a>}{safeExternalUrl(company.instagram) && <a className="text-[#173052] underline" href={safeExternalUrl(company.instagram)!} target="_blank" rel="noopener noreferrer">Instagram</a>}</div>
-    <div className="grid gap-3 rounded-xl border border-[#eadbb9] bg-[#faf6ed] p-4 sm:grid-cols-3">
-      <div><p className="text-xs uppercase tracking-wide text-[#816736]">Relacionamento</p><p className="mt-1 font-semibold text-[#173052]">{current?.relationship_status || "Sem ata concluída"}</p></div>
-      <div><p className="text-xs uppercase tracking-wide text-[#816736]">Última reunião</p><p className="mt-1 font-semibold text-[#173052]">{current ? formatDate(current.visit_at) : "Ainda não registrada"}</p></div>
-      <div><p className="text-xs uppercase tracking-wide text-[#816736]">Próximo follow-up</p><p className={`mt-1 font-semibold ${next && taskIsLate(next) ? "text-rose-700" : "text-[#173052]"}`}>{next ? formatDate(next.due_at,true) : "A definir"}</p></div>
+  const timelineList = (limit?: number) => timeline.length ? <ol className="relative space-y-5 border-l border-[#ded8cb] pl-5">{timeline.slice(0, limit).map((item) => <li key={item.id} className="relative min-w-0">
+    <span className="absolute -left-[25px] top-1.5 size-2 rounded-full bg-[#b79558] ring-4 ring-white" />
+    <div className="flex flex-wrap items-center justify-between gap-1 text-xs"><span className="font-semibold text-[#806738]">{item.kind}</span><time className="text-slate-500">{formatDate(item.date)}</time></div>
+    <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{item.title}</p>
+    {item.detail && <p className="mt-1 text-xs leading-5 text-slate-500">{item.detail}</p>}
+    {item.attachment && <Button size="sm" variant="link" className="px-0" onClick={() => onOpenAttachment(item.attachment!)}><FileText className="size-4" /> Abrir ata original</Button>}
+  </li>)}</ol> : <p className="text-sm text-slate-500">As reuniões, conversas e próximos passos aparecerão aqui.</p>;
+
+  const suggestionCards = (limit?: number) => ideas.length ? <div className="grid gap-3 sm:grid-cols-2">{ideas.slice(0, limit).map(({ meeting, idea }, index) => <article key={meeting.id + index} className="rounded-xl bg-[#f8f5ed] p-4">
+    <Badge variant="secondary" className="bg-[#ede4ce] text-[#705c35]">Em análise</Badge><h4 className="mt-2 font-medium text-[#173052]">{idea.title}</h4>
+    <p className="mt-1 text-sm leading-6 text-slate-600">{idea.description}</p><p className="mt-2 text-xs text-slate-500">{idea.type} · Reunião de {formatDate(meeting.visit_at)}</p>
+    {editable && <Button className="mt-3 h-auto whitespace-normal px-0 text-left" variant="link" onClick={() => onCreateOpportunity(meeting, idea)}>Revisar e criar oportunidade <ArrowUpRight className="size-4 shrink-0" /></Button>}
+  </article>)}</div> : <p className="text-sm text-slate-500">Nenhuma oportunidade sugerida nas atas.</p>;
+
+  return <div className="min-w-0 space-y-6">
+    <div className="rounded-2xl bg-[#173052] p-5 text-white sm:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3"><span className="rounded-full bg-white/10 px-3 py-1 text-xs text-[#eadbb9]">{current?.relationship_status || "Relacionamento a definir"}</span><span className="text-xs text-white/70">Potencial {current?.potential?.toLowerCase() || "a avaliar"}</span></div>
+      <p className="mt-4 flex items-center gap-2 text-sm text-white/70"><Building2 className="size-4 shrink-0" />{company.segment || details.segment || "Segmento a informar"}{company.city ? " · " + company.city : ""}</p>
+      <div className="mt-5 grid gap-4 sm:grid-cols-3">
+        <div><p className="text-xs text-white/60">Contato principal</p><p className="mt-1 font-medium">{primaryContact?.name || "A definir"}</p>{primaryContact?.title && <p className="mt-1 text-xs text-white/70">{primaryContact.title}</p>}</div>
+        <div><p className="text-xs text-white/60">Responsável</p><p className="mt-1 font-medium">{current?.responsible || primaryContact?.assigned_to || "A definir"}</p></div>
+        <div><p className="text-xs text-white/60">Última interação</p><p className="mt-1 font-medium">{lastContact ? formatDate(lastContact) : "Ainda não registrada"}</p></div>
+      </div>
     </div>
-    <div className="flex flex-wrap gap-2">
-      {canEdit && !company.archived_at && <Button className="bg-[#173052] text-white" onClick={() => onRegister()}><Plus className="size-4" /> Adicionar ata da reunião</Button>}
-      {canEdit && !company.archived_at && <Button variant="outline" onClick={() => onAddTask(firstContact?.id)}><CalendarClock className="size-4" /> Agendar follow-up</Button>}
-      {canEdit && !company.archived_at && <Button variant="outline" onClick={() => onAddInteraction(firstContact?.id)}><MessageCircle className="size-4" /> Registrar conversa</Button>}
-      {canEdit && <Button variant="ghost" onClick={onEditCompany}><Pencil className="size-4" /> Editar empresa</Button>}
+    <div className="grid gap-4 rounded-2xl bg-[#eee3cd] p-5 sm:grid-cols-[1fr_auto] sm:items-center">
+      <div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-widest text-[#806738]">Próximo passo</p>
+        <p className="mt-2 text-lg font-semibold leading-snug text-[#173052]">{next?.title || current?.next_action || "Definir o próximo contato"}</p>
+        <p className={"mt-2 text-sm " + (next && taskIsLate(next) ? "font-medium text-rose-700" : "text-[#6d624e]")}><CalendarClock className="mr-1.5 inline size-4" />{next ? (taskIsLate(next) ? "Atrasado · " : "Follow-up · ") + formatDate(next.due_at, true) : current?.next_due_at ? "Data na ata: " + formatDate(current.next_due_at) + " · sem tarefa pendente" : "Follow-up a definir"}</p>
+      </div>{editable && <Button variant="outline" className="bg-white/70" onClick={() => onAddTask(primaryContact?.id)}>Agendar follow-up</Button>}
     </div>
-    <div className="flex gap-5 overflow-x-auto border-b border-slate-200" role="tablist" aria-label="Ficha da empresa">
-      {([ ["overview","Visão geral"], ["meetings",`Reuniões (${sortedDiagnostics.length})`], ["history","Histórico"], ["people","Contatos"] ] as const).map(([id,label]) =>
-        <button key={id} role="tab" type="button" aria-selected={tab === id} onClick={() => setTab(id)} className={`shrink-0 border-b-2 py-2 text-sm font-medium ${tab === id ? "border-[#173052] text-[#173052]" : "border-transparent text-slate-600"}`}>{label}</button>)}
+    <div className="flex flex-wrap gap-2">{editable && <><Button onClick={() => onRegister()}><Plus className="size-4" /> Registrar reunião</Button><Button variant="ghost" onClick={() => onAddInteraction(primaryContact?.id)}><MessageCircle className="size-4" /> Observação</Button></>}{canEdit && <Button variant="ghost" onClick={onEditCompany}><Pencil className="size-4" /> Editar dados</Button>}</div>
+    <div className="grid grid-cols-2 gap-1 rounded-xl bg-[#f0ede6] p-1 sm:grid-cols-3 lg:grid-cols-6" role="tablist" aria-label="Perfil da empresa">{tabs.map(([id, label], index) => <button key={id} id={panelId + id} role="tab" type="button" aria-selected={tab === id} aria-controls={panelId + "panel"} tabIndex={tab === id ? 0 : -1} onClick={() => setTab(id)} onKeyDown={(event) => {
+      const nextIndex = event.key === "ArrowRight" ? (index + 1) % tabs.length : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : -1;
+      if (nextIndex >= 0) { event.preventDefault(); setTab(tabs[nextIndex][0]); document.getElementById(panelId + tabs[nextIndex][0])?.focus(); }
+    }} className={"min-h-11 rounded-lg px-2 py-2 text-sm font-medium transition-colors " + (tab === id ? "bg-white text-[#173052] shadow-sm" : "text-slate-600 hover:bg-white/60")}>{label}</button>)}</div>
+    <div id={panelId + "panel"} role="tabpanel" aria-labelledby={panelId + tab} className="space-y-6">
+      {tab === "overview" && <>
+        <section className="crm-card"><h3 className="mb-3 font-semibold text-[#173052]">Quem é esta empresa?</h3><p className="whitespace-pre-wrap text-sm leading-7 text-slate-600">{details.history || company.observations || "Registre uma reunião para construir o contexto desta empresa."}</p></section>
+        <div className="grid gap-4 sm:grid-cols-2">{[{ label: "Principais dores", source: painsSource, entries: painsSource?.pains.map((item) => item.text) }, { label: "Principais desejos", source: desiresSource, entries: desiresSource?.desires }].map(({ label, source, entries }) => <section key={label} className="crm-card">
+          <div className="flex items-center justify-between gap-2"><h3 className="font-semibold text-[#173052]">{label}</h3>{editable && source && <Button size="icon-sm" variant="ghost" aria-label={"Editar " + label.toLowerCase()} onClick={() => onEditDiagnostic(source)}><Pencil className="size-4" /></Button>}</div>
+          {entries?.length ? <ul className="mt-3 space-y-3">{entries.map((text, index) => <li key={index} className="flex gap-2 text-sm leading-6 text-slate-600"><span className="mt-2.5 size-1 shrink-0 rounded-full bg-[#b79558]" />{text}</li>)}</ul> : <p className="mt-3 text-sm text-slate-500">Ainda não informado. Pode ser preenchido depois.</p>}
+          {source && <p className="mt-3 text-xs text-slate-400">Registrado em {formatDate(source.visit_at)}</p>}
+        </section>)}</div>
+        <section className="crm-card"><div className="mb-4 flex items-center justify-between gap-2"><h3 className="font-semibold text-[#173052]">Oportunidades em análise</h3><Button variant="ghost" size="sm" onClick={() => setTab("opportunities")}>Ver todas</Button></div>{suggestionCards(2)}{openDeals.length > 0 && <p className="mt-4 text-sm text-slate-500">{openDeals.length} oportunidade(s) no funil · {currency(openDeals.reduce((total, item) => total + Number(item.amount), 0))}</p>}</section>
+        <section className="crm-card"><div className="mb-5 flex items-center justify-between gap-2"><h3 className="font-semibold text-[#173052]">Últimas interações</h3><Button variant="ghost" size="sm" onClick={() => setTab("history")}>Ver histórico</Button></div>{timelineList(3)}</section>
+      </>}
+      {tab === "history" && <section className="crm-card"><h3 className="mb-6 font-semibold text-[#173052]">Toda a história deste relacionamento</h3>{timelineList()}</section>}
+      {tab === "opportunities" && <>
+        <section className="crm-card"><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h3 className="font-semibold text-[#173052]">Negócios no funil</h3>{editable && <Button variant="outline" size="sm" onClick={onNewOpportunity}><Plus className="size-4" /> Criar oportunidade</Button>}</div>
+          {opportunities.length ? <div className="grid gap-3 sm:grid-cols-2">{opportunities.map((item) => <button key={item.id} onClick={() => onOpportunityDetail(item.id)} className="rounded-xl bg-slate-50 p-4 text-left hover:bg-slate-100"><Badge variant="secondary">{item.is_draft ? "Rascunho" : item.stage}</Badge><p className="mt-2 font-medium">{item.title}</p><p className="mt-2 text-sm text-slate-500">{item.amount ? currency(item.amount) : "Valor a definir"} · {item.assigned_to || "Sem responsável"}</p></button>)}</div> : <p className="text-sm text-slate-500">Nenhum negócio no funil para esta empresa.</p>}
+        </section><section className="crm-card"><h3 className="font-semibold text-[#173052]">Ideias das reuniões</h3><p className="mb-4 mt-1 text-sm text-slate-500">Sugestões em análise. Revise antes de criar um negócio.</p>{suggestionCards()}</section>
+      </>}
+      {tab === "meetings" && <>
+        <p className="text-sm text-slate-500">Cada reunião tem sua própria ata. Novos registros preservam todo o histórico.</p>
+        {withoutMinutes.length > 0 && <section className="crm-card bg-[#faf6ed]"><h3 className="mb-3 font-semibold">Reuniões sem ata</h3>{withoutMinutes.map((meeting) => <div key={meeting.id} className="flex flex-wrap items-center justify-between gap-3 py-3"><div><p className="text-sm font-medium">{meeting.title}</p><p className="mt-1 text-xs text-slate-500">{formatDate(meeting.due_at, true)}</p></div>{editable && <Button size="sm" variant="outline" onClick={() => onRegister(meeting)}>Adicionar ata</Button>}</div>)}</section>}
+        {sorted.length ? sorted.map((item) => <article key={item.id} className="crm-card">
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-medium uppercase tracking-wide text-[#806738]">{formatDate(item.visit_at, item.business_details.visit_time_known !== "false")}</p><h3 className="mt-2 font-semibold text-[#173052]">{item.business_details.source_meeting_title || item.visit_kind}</h3></div><Badge variant="secondary">{item.status === "draft" ? "Rascunho" : item.status === "archived" ? "Arquivada" : "Ata salva"}</Badge></div>
+          <p className="mt-4 whitespace-pre-wrap break-words text-sm leading-7 text-slate-600">{item.summary || "Resumo ainda não preenchido."}</p>
+          {item.next_action && <div className="mt-4 rounded-xl bg-[#faf6ed] p-3"><p className="text-xs font-semibold text-[#806738]">Próximo passo registrado</p><p className="mt-1 text-sm">{item.next_action}</p>{item.next_due_at && <p className="mt-1 text-xs text-slate-500">{formatDate(item.next_due_at, true)}</p>}</div>}
+          {item.business_details.raw_notes && <details className="mt-4 text-sm"><summary className="cursor-pointer text-slate-500">Texto original da reunião</summary><p className="mt-3 whitespace-pre-wrap break-words leading-6 text-slate-600">{item.business_details.raw_notes}</p></details>}
+          <div className="mt-4 flex flex-wrap gap-2">{item.business_details.attachment_path && <Button variant="outline" size="sm" onClick={() => onOpenAttachment(item.business_details.attachment_path)}><FileText className="size-4" /> Abrir ata original</Button>}{editable && <Button variant="ghost" size="sm" onClick={() => onEditDiagnostic(item)}>Editar ata</Button>}{editable && item.status === "completed" && <Button variant="ghost" size="sm" onClick={() => onArchiveDiagnostic(item)}>Arquivar</Button>}</div>
+        </article>) : <section className="crm-card py-10 text-center"><FileText className="mx-auto size-8 text-[#b79558]" /><h3 className="mt-4 font-semibold">A primeira reunião começa este histórico</h3><p className="mt-2 text-sm text-slate-500">Use “Registrar reunião” para anexar uma ata ou escrever um resumo.</p></section>}
+      </>}
+      {tab === "connections" && <section className="crm-card"><h3 className="flex items-center gap-2 font-semibold"><Users className="size-5" /> Pessoas e conexões</h3><p className="mt-1 text-sm text-slate-500">Contatos vinculados a esta empresa. Parcerias sugeridas ficam em Oportunidades.</p><div className="mt-5 grid gap-3 sm:grid-cols-2">{contacts.map((person) => <div key={person.id} className="rounded-xl bg-slate-50 p-4"><p className="font-medium">{person.name}</p><p className="mt-1 text-sm text-slate-500">{person.title || "Cargo a informar"}</p><p className="mt-2 break-words text-sm text-slate-600">{person.email || person.whatsapp || person.phone || "Contato a informar"}</p></div>)}</div>{!contacts.length && <p className="mt-4 text-sm text-slate-500">Nenhum contato vinculado.</p>}</section>}
+      {tab === "data" && <section className="crm-card"><h3 className="mb-5 font-semibold">Dados e contexto da empresa</h3><dl className="grid gap-5 sm:grid-cols-2">{[["Segmento", company.segment], ["Cidade", company.city], ["Telefone", company.phone], ["Observações", company.observations], ...Object.entries(details).filter(([key]) => key in businessLabels).map(([key, value]) => [businessLabels[key], value])].filter(([, value]) => value).map(([label, value], index) => <div key={String(label) + index}><dt className="text-xs font-medium text-slate-500">{label}</dt><dd className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{value}</dd></div>)}</dl><div className="mt-5 flex flex-wrap gap-4">{[["Site", company.website], ["Instagram", company.instagram]].map(([label, url]) => safeExternalUrl(url) && <a key={label} href={safeExternalUrl(url)!} target="_blank" rel="noopener noreferrer" className="text-sm underline underline-offset-4">{label} <ArrowUpRight className="inline size-4" /></a>)}</div></section>}
     </div>
-
-    {tab === "overview" && <div className="space-y-5">
-      {current ? <>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="rounded-lg border border-slate-200 p-4"><p className="text-sm text-slate-500">Responsável</p><strong className="text-[#173052]">{current.responsible || "Sem responsável"}</strong></div>
-          <div className="rounded-lg border border-slate-200 p-4"><p className="text-sm text-slate-500">Potencial</p><strong className="text-[#173052]">{current.potential || "Ainda não avaliado"}</strong></div>
-          <div className="rounded-lg border border-slate-200 p-4"><p className="text-sm text-slate-500">Oportunidades abertas</p><strong className="text-[#173052]">{openDeals.length}</strong></div>
-        </div>
-        <section><h3 className="mb-2 font-semibold text-[#173052]">Resumo da última reunião</h3><p className="whitespace-pre-wrap rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-700">{current.summary}</p></section>
-        {visibleBusinessDetails(companySummary).length > 0 && <section><h3 className="mb-2 font-semibold text-[#173052]">Detalhes do negócio</h3><div className="grid gap-3 sm:grid-cols-2">{visibleBusinessDetails(companySummary).map(([key,value]) => <div key={key} className="rounded-lg border border-slate-200 p-3"><p className="text-xs font-semibold text-slate-500">{businessLabels[key] || key}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-700">{value}</p></div>)}</div></section>}
-        <div className="grid gap-4 sm:grid-cols-2">
-          <section className="rounded-xl border border-slate-200 p-4"><h3 className="font-semibold text-[#173052]">Principais dores</h3>{current.pains.length ? <ul className="mt-3 space-y-2">{current.pains.map((pain,index) => <li key={index} className="flex items-start justify-between gap-2 text-sm text-slate-700"><span>• {pain.text}</span><Badge variant="secondary">{pain.priority}</Badge></li>)}</ul> : <p className="mt-2 text-sm text-slate-500">Ainda não mapeadas.</p>}</section>
-          <section className="rounded-xl border border-slate-200 p-4"><h3 className="font-semibold text-[#173052]">Principais desejos</h3>{current.desires.length ? <ul className="mt-3 space-y-2 text-sm text-slate-700">{current.desires.map((item,index) => <li key={index}>• {item}</li>)}</ul> : <p className="mt-2 text-sm text-slate-500">Ainda não mapeados.</p>}</section>
-        </div>
-        <section className="rounded-xl border border-slate-200 p-4"><h3 className="font-semibold text-[#173052]">Oportunidades sugeridas</h3>{current.ideas.length ? <div className="mt-3 space-y-3">{current.ideas.map((idea,index) => <div key={index} className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 p-3"><div><p className="font-medium text-slate-800">{idea.title}</p><p className="text-sm text-slate-600">{idea.type}{idea.potential ? ` · Potencial ${idea.potential}` : ""}{idea.amount ? ` · ${currency(idea.amount)}` : ""}</p>{idea.description && <p className="mt-1 text-sm text-slate-600">{idea.description}</p>}</div>{canEdit && <Button size="sm" variant="outline" onClick={() => onCreateOpportunity(current,idea)}><Target className="size-4" /> Criar negócio no funil</Button>}</div>)}</div> : <p className="mt-2 text-sm text-slate-500">Nenhuma oportunidade sugerida.</p>}</section>
-        <section className="rounded-xl border border-[#eadbb9] bg-[#faf6ed] p-4"><h3 className="font-semibold text-[#173052]">Próximo passo</h3><p className="mt-2 text-sm text-slate-700">{current.next_action || "A definir"}</p><p className="mt-1 text-sm text-slate-600">{current.next_due_at ? formatDate(current.next_due_at,true) : "Sem data marcada"}{current.task_id ? " · Follow-up agendado" : ""}</p></section>
-      </> : <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center"><CalendarDays className="mx-auto size-7 text-slate-400" /><p className="mt-2 font-medium text-[#173052]">Nenhuma ata registrada</p><p className="mt-1 text-sm text-slate-600">Adicione a primeira reunião para começar o histórico deste cliente.</p>{canEdit && <Button className="mt-4 bg-[#173052] text-white" onClick={() => onRegister()}><Plus className="size-4" /> Adicionar ata</Button>}</div>}
-    </div>}
-
-    {tab === "meetings" && <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-semibold text-[#173052]">Histórico de reuniões e atas</h3><p className="text-sm text-slate-600">Cada ata fica salva separadamente e nunca substitui as anteriores.</p></div>{canEdit && <Button className="bg-[#173052] text-white" onClick={() => onRegister()}><Plus className="size-4" /> Nova ata</Button>}</div>
-      {meetingsWithoutMinutes.length > 0 && <section className="rounded-xl border border-amber-200 bg-amber-50/60 p-4"><h4 className="font-semibold text-amber-950">Reuniões sem ata ({meetingsWithoutMinutes.length})</h4><div className="mt-3 space-y-3">{meetingsWithoutMinutes.map((meeting) => { const future = new Date(meeting.due_at).getTime() > Date.now(); return <div key={meeting.id} className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-800">{meeting.title}</p><Badge variant="secondary">{future ? "Agendada" : "Ata pendente"}</Badge></div><p className="mt-1 text-sm text-slate-600">{formatDate(meeting.due_at,true)}{contactName(meeting.contact_id) ? ` · ${contactName(meeting.contact_id)}` : ""}</p></div>{canEdit && <Button size="sm" variant="outline" onClick={() => onRegister(meeting)}><FileText className="size-4" /> Adicionar ata</Button>}</div>; })}</div></section>}
-      {sortedDiagnostics.length ? <div className="space-y-4">{sortedDiagnostics.map((item) => { const pendingSections = [!item.summary.trim() && "resumo", !visibleBusinessDetails(item.business_details).length && "negócio", !item.pains.length && "dores", !item.desires.length && "desejos", !item.next_action && "próximo passo"].filter(Boolean); return <article key={item.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h4 className="font-semibold text-[#173052]">{item.business_details.source_meeting_title || item.visit_kind}</h4><Badge variant="secondary">{item.status === "draft" ? "Rascunho" : item.status === "archived" ? "Arquivada" : "Ata salva"}</Badge></div><p className="mt-1 text-sm font-medium text-slate-700">{formatDate(item.visit_at,item.business_details?.visit_time_known !== "false")}</p><div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">{contactName(item.contact_id) && <span><Users className="mr-1 inline size-3.5" />{contactName(item.contact_id)}</span>}{item.attendees && <span>Presentes: {item.attendees}</span>}{item.location && <span><MapPin className="mr-1 inline size-3.5" />{item.location}</span>}{item.responsible && <span>Responsável: {item.responsible}</span>}</div></div><div className="flex shrink-0 flex-wrap gap-2">{item.business_details.attachment_path && <Button variant="outline" size="sm" onClick={() => onOpenAttachment(item.business_details.attachment_path)}><FileText className="size-4" /> Ata original</Button>}{canEdit && <Button variant="outline" size="sm" onClick={() => onEditDiagnostic(item)}>Editar</Button>}{canEdit && item.status === "completed" && <Button variant="ghost" size="sm" onClick={() => onArchiveDiagnostic(item)}>Arquivar</Button>}</div></div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_240px]"><div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Resumo</p><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">{item.summary || "Resumo ainda não preenchido"}</p></div><div className="rounded-lg bg-[#faf6ed] p-3"><p className="text-xs font-semibold uppercase tracking-wide text-[#816736]">Próxima ação</p><p className="mt-1 text-sm text-slate-700">{item.next_action || "A definir"}</p>{item.next_due_at && <p className="mt-1 text-xs text-slate-500">Follow-up: {formatDate(item.next_due_at,true)}</p>}</div></div>
-        {item.status === "draft" && pendingSections.length > 0 && <p className="mt-3 text-xs text-slate-500">Para revisar, se houver informações: {pendingSections.join(", ")}.</p>}
-      </article>; })}</div> : <p className="rounded-lg border border-dashed border-slate-300 p-5 text-sm text-slate-600">Ainda não há reuniões com ata neste cliente.</p>}
-    </div>}
-
-    {tab === "history" && <div className="space-y-5"><h3 className="font-semibold text-[#173052]">Linha do tempo completa</h3>{items.length ? <ol className="space-y-2">{items.map((item) => <li key={item.id} className="rounded-lg border border-slate-200 p-3"><div className="flex flex-wrap justify-between gap-2"><strong className="text-sm text-[#173052]">{item.kind}</strong><time className="text-sm text-slate-500">{formatDate(item.when,item.withTime)}</time></div><p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">{item.title}</p><p className="mt-1 text-xs text-slate-500">{item.assignee}{item.detail ? ` · ${item.detail}` : ""}</p></li>)}</ol> : <p className="text-sm text-slate-500">Nenhum registro nesta empresa.</p>}<h3 className="font-semibold text-[#173052]">Conversas vinculadas</h3><HistoryTimeline interactions={interactions} /></div>}
-    {tab === "people" && <div className="space-y-3">{contacts.length ? contacts.map((person) => <div key={person.id} className="rounded-lg border border-slate-200 p-4"><p className="font-medium text-[#173052]">{person.name}</p><p className="text-sm text-slate-600">{person.title || "Cargo não informado"} · {person.whatsapp || person.phone || "Sem telefone"}</p></div>) : <p className="text-sm text-slate-500">Nenhum contato vinculado.</p>}<p className="text-sm text-slate-500"><Activity className="mr-1 inline size-4" /> Os registros dessa empresa são compartilhados com a equipe.</p></div>}
   </div>;
 }
