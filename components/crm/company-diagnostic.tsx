@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import { Check, CheckCircle2, FileText, FileUp, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -73,6 +73,7 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
   onQuickCreate: (name: string, contactName: string, phone: string) => Promise<{ companyId: string; contactId: string } | null>;
   onClose: () => void;
 }) {
+  const draftStorageKey = `stormfy:meeting-draft:${initial?.id || meeting?.id || `${companyId || "new"}:${contactId || "new"}`}`;
   const [form, setForm] = useState<DiagnosticForm>(() => initial ? diagnosticFormFromRecord(initial) : meeting ? diagnosticFormFromMeeting(meeting, responsible) : emptyDiagnostic(companyId, contactId, responsible));
   const [recordId, setRecordId] = useState(initial?.id);
   const [pasteMode, setPasteMode] = useState(!initial);
@@ -86,8 +87,30 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
   const [quickName, setQuickName] = useState("");
   const [quickContact, setQuickContact] = useState("");
   const [quickPhone, setQuickPhone] = useState("");
+  const [draftReady, setDraftReady] = useState(false);
+  const [recoveredDraft, setRecoveredDraft] = useState(false);
   const availableContacts = contacts.filter((item) => item.company_id === form.company_id);
   const fileInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (initial) { setDraftReady(true); return; }
+    try {
+      const saved = window.localStorage.getItem(draftStorageKey);
+      if (!saved) return;
+      const draft = JSON.parse(saved) as { form?: DiagnosticForm; rawNotes?: string; pasteMode?: boolean };
+      if (draft.form?.company_id || draft.rawNotes) {
+        setForm((current) => ({ ...current, ...draft.form, business_details: draft.form?.business_details || current.business_details }));
+        setRawNotes(draft.rawNotes || "");
+        setPasteMode(draft.pasteMode ?? true);
+        setDirty(true);
+        setRecoveredDraft(true);
+      }
+    } catch { window.localStorage.removeItem(draftStorageKey); }
+    finally { setDraftReady(true); }
+  }, [draftStorageKey, initial]);
+  useEffect(() => {
+    if (!draftReady || !dirty || initial) return;
+    window.localStorage.setItem(draftStorageKey, JSON.stringify({ form, rawNotes, pasteMode, savedAt: new Date().toISOString() }));
+  }, [draftReady, dirty, form, rawNotes, pasteMode, initial, draftStorageKey]);
   const change = (partial: Partial<DiagnosticForm>) => { setForm((current) => ({ ...current, ...partial })); setDirty(true); setError(""); };
   const changeBusiness = (key: string, value: string) => change({ business_details: { ...form.business_details, [key]: value } });
   const close = () => {
@@ -104,7 +127,7 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
     setBusy(true); setError("");
     try {
       const id = await onSave({ ...form, status, ideas: form.ideas.filter((idea) => idea.title.trim()) }, recordId, pdf);
-      if (id) { setRecordId(id); setDirty(false); if (!keepOpen) onClose(); }
+      if (id) { window.localStorage.removeItem(draftStorageKey); setRecordId(id); setDirty(false); if (!keepOpen) onClose(); }
       else setError("Não foi possível salvar. Confira os campos e tente novamente.");
     } catch {
       setError("Não foi possível salvar. Confira a data e tente novamente.");
@@ -155,6 +178,7 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
         <DialogDescription>{pasteMode ? "Envie a ata em PDF ou cole a transcrição. Revise o resultado antes de salvar." : "Revise os pontos e a data sugerida de follow-up antes de salvar."}</DialogDescription></DialogHeader>
       <div className="space-y-5">
         {pasteMode ? <div className="space-y-4">
+          {recoveredDraft && <p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">Rascunho recuperado neste dispositivo. Você pode continuar de onde parou.</p>}
           {error && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
           <Field label="Empresa *"><NativeSelect value={form.company_id} onChange={(event) => change({ company_id: event.target.value, contact_id: "" })}><option value="">Selecione a empresa</option>{companies.filter((company) => !company.archived_at).map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}</NativeSelect></Field>
           {!form.company_id && <div className="rounded-lg border border-[#eadbb9] bg-[#faf6ed] p-3"><p className="mb-2 text-sm font-medium text-[#173052]">Empresa ainda não cadastrada?</p><div className="flex flex-wrap gap-2"><Input className="min-w-48 flex-1" value={quickName} onChange={(event) => setQuickName(event.target.value)} placeholder="Nome da empresa" aria-label="Nome da nova empresa" /><Button type="button" variant="outline" disabled={busy || !quickName.trim()} onClick={async () => { setBusy(true); try { const created = await onQuickCreate(quickName,quickContact,""); if (created) change({ company_id: created.companyId, contact_id: created.contactId }); } catch { setError("Não foi possível cadastrar a empresa."); } finally { setBusy(false); } }}>Cadastrar empresa</Button></div></div>}
@@ -170,7 +194,8 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
           {!aiEnabled && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">A análise automática está temporariamente indisponível. O arquivo continua nesta tela.</p>}
           <div className="sticky bottom-[-1rem] z-10 -mx-4 flex flex-col gap-2 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:justify-end sm:border-0 sm:bg-transparent sm:p-0"><Button type="button" variant="outline" onClick={() => { change({ summary: rawNotes.trim(), business_details: { ...form.business_details, raw_notes: rawNotes.trim() } }); setPasteMode(false); }}>Preencher manualmente</Button><Button type="button" disabled={busy || !aiEnabled || !form.company_id || (rawNotes.trim().length < 30 && !pdf)} onClick={() => void organizeNotes()} className="bg-[#173052] text-white"><Sparkles className="size-4" /> {busy ? "Lendo a ata e preenchendo..." : "Enviar e preencher automaticamente"}</Button></div>
         </div> : <>
-        <div className="rounded-xl border border-[#eadbb9] bg-[#faf6ed] p-3 text-sm text-[#173052]">Revise e edite antes de salvar. A data e o horário sugeridos para o follow-up podem ser alterados; a tarefa só é criada ao confirmar.</div>
+        <div className="rounded-xl border border-[#eadbb9] bg-[#faf6ed] p-3 text-sm text-[#173052]"><strong>Cadastro rápido:</strong> para salvar a reunião, preencha somente o resumo e, se houver, o próximo passo. Os detalhes, dores, desejos e oportunidades são opcionais e podem ser completados depois.</div>
+        {recoveredDraft && <p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">Rascunho recuperado neste dispositivo. Você pode continuar de onde parou.</p>}
         {error && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
         <section className="space-y-3"><h3 className="text-base font-semibold text-[#173052]">Empresa e encontro</h3><div className="grid gap-4 sm:grid-cols-2">
           <Field label="Empresa *"><NativeSelect value={form.company_id} onChange={(event) => change({ company_id: event.target.value, contact_id: "" })}><option value="">Selecione</option>{companies.filter((c) => !c.archived_at).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</NativeSelect></Field>
@@ -189,6 +214,7 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
           <div className="grid gap-4 sm:grid-cols-2"><Field label="Pessoas presentes"><Input value={form.attendees} onChange={(event) => change({ attendees: event.target.value })} /></Field><Field label="Local"><Input value={form.location} onChange={(event) => change({ location: event.target.value })} /></Field></div>
         </div></section>
         <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer font-semibold text-[#173052]">Detalhes da empresa (editar)</summary><div className="mt-4 grid gap-4 sm:grid-cols-2">{businessFields.map(([key,label]) => <Field key={key} label={label}><Textarea rows={key === "history" || key === "sales" ? 3 : 2} value={form.business_details[key] || ""} onChange={(event) => changeBusiness(key,event.target.value)} placeholder="Registre apenas o que foi informado" /></Field>)}</div></details>
+        <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer font-semibold text-[#173052]">Complementar depois: dores, desejos e oportunidades</summary><div className="mt-4 space-y-6">
         <section className="space-y-3"><h3 className="text-base font-semibold text-[#173052]">Principais dores</h3><p className="text-sm text-slate-600">O que a empresa relatou como problema? Ajuste a prioridade.</p>
           {form.pains.map((pain,index) => <div key={index} className="grid gap-2 rounded-lg border border-slate-200 p-3 sm:grid-cols-[1fr_145px_auto]"><Field label={`Dor ${index + 1}`}><Input value={pain.text} onChange={(event) => editPain(index,{ text: event.target.value })} placeholder="Ex.: Ampliar a visibilidade em Curitiba" /></Field><Field label="Prioridade"><NativeSelect value={pain.priority} onChange={(event) => editPain(index,{ priority: event.target.value as DiagnosticPain["priority"] })}>{["Baixa","Média","Alta"].map((p) => <option key={p}>{p}</option>)}</NativeSelect></Field><Button type="button" size="icon" variant="ghost" className="self-end" aria-label={`Remover dor ${index + 1}`} onClick={() => change({ pains: form.pains.filter((_,i) => i !== index) })}><Trash2 className="size-4" /></Button></div>)}
           <Button type="button" variant="outline" onClick={() => change({ pains: [...form.pains,{ text: "", priority: "Média" }] })}><Plus className="size-4" /> Adicionar dor</Button>
@@ -212,6 +238,7 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
           </div>)}
           <Button type="button" variant="outline" onClick={() => change({ ideas: [...form.ideas,blankIdea()] })}><Plus className="size-4" /> Adicionar oportunidade</Button>
         </section>
+        </div></details>
         <section className="space-y-4 rounded-xl border border-[#eadbb9] bg-[#faf6ed] p-4"><h3 className="text-base font-semibold text-[#173052]">Próximo passo e follow-up</h3><Field label="O que fazer agora?"><Textarea rows={3} value={form.next_action} onChange={(event) => change({ next_action: event.target.value })} placeholder="Ex.: Apresentar dois parceiros ao Vinicius" /></Field>
           <div className="grid gap-4 sm:grid-cols-2"><Field label="Tipo"><NativeSelect value={form.next_kind} onChange={(event) => change({ next_kind: event.target.value })}>{nextKinds.map((kind) => <option key={kind}>{kind}</option>)}</NativeSelect></Field>
             <Field label="Data e horário"><Input type="datetime-local" value={form.next_due_at} onChange={(event) => change({ next_due_at: event.target.value })} /></Field>
