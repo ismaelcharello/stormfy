@@ -5,13 +5,16 @@ import { diagnostic, opportunity, task } from "./fixtures";
 
 describe("Historical context", () => {
   it("keeps prior company details when a later meeting is sparse, ignoring drafts and archived minutes", () => {
-    const latest = { ...diagnostic, id: "latest", visit_at: "2026-09-29T12:00:00Z", summary: "Nova conversa", business_details: { history: "", audience: "Empresários" }, pains: [], desires: [], ideas: [] };
+    const latest = { ...diagnostic, id: "latest", visit_at: "2026-09-29T12:00:00Z", summary: "Nova conversa", potential: null, responsible: null, contact_id: null, business_details: { history: "", audience: "Empresários" }, pains: [], desires: [], ideas: [] };
     const knowledge = companyKnowledge([diagnostic, latest, { ...latest, status: "draft", business_details: { history: "Not reviewed" } }]);
     expect(knowledge.current?.id).toBe("latest");
     expect(knowledge.details.history).toBe(diagnostic.business_details.history);
     expect(knowledge.details.audience).toBe("Empresários");
     expect(knowledge.painsSource?.id).toBe(diagnostic.id);
     expect(knowledge.ideas).toHaveLength(1);
+    expect(knowledge.potential).toBe(diagnostic.potential);
+    expect(knowledge.contactId).toBe(diagnostic.contact_id);
+    expect(knowledge.responsible).toBe(diagnostic.responsible);
   });
   it("does not count cancelled, archived or draft meetings as pending", () => {
     expect(isPendingTask(task)).toBe(true);

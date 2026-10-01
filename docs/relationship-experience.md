@@ -32,6 +32,8 @@
 - `pnpm test:e2e`: navegação e ausência de overflow em 360, 390, 768, 1024 e 1440 pixels; CTA visível e recuperação após recarregar.
 - Os testes de navegador usam somente a prévia local de desenvolvimento e dados fictícios. Não usam credenciais de produção.
 - A migração foi ensaiada em transação com rollback: proprietário, outro membro, compartilhamento, registros vinculados e usuário de fora da equipe.
+- O RPC existente foi validado em transação com rollback: criar empresa e contato, registrar duas reuniões distintas, preservar os metadados da ata e atualizar o follow-up sem duplicar a tarefa.
+- A primeira execução no GitHub Actions aprovou todos os testes de componentes, tipos, build e os seis cenários de navegador. A suíte foi ampliada para também criar empresa/oportunidade pessoal e verificar as duas atas após salvar.
 
 ## Gate de publicação
 
@@ -39,4 +41,4 @@
 2. Aplicar a migração `opportunity_visibility` e confirmar as políticas no Supabase antes de disponibilizar a nova interface em produção.
 3. Verificar a prévia com a integração configurada e somente então promover a versão.
 
-O navegador local desta sessão foi bloqueado pelo ambiente. A suíte de navegador fica no GitHub Actions para executar no runner padrão. Enquanto não houver resultado aprovado, a publicação em produção permanece pendente.
+O navegador local desta sessão foi bloqueado pelo ambiente; os testes de navegador executam no runner padrão do GitHub Actions. A integração GitHub/Vercel criou a prévia, mas a conexão Vercel desta sessão não tem acesso ao projeto/deployment. A migração definitiva e a publicação em produção aguardam a verificação dessa prévia com acesso autorizado ao projeto.

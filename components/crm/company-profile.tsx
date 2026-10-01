@@ -24,11 +24,11 @@ export function CompanyProfile({ company, contacts, diagnostics, opportunities, 
 }) {
   const [tab, setTab] = useState<(typeof tabs)[number][0]>("overview");
   const panelId = useId();
-  const { current, details, painsSource, desiresSource, ideas } = companyKnowledge(diagnostics);
+  const { current, details, potential, responsible, contactId, painsSource, desiresSource, ideas } = companyKnowledge(diagnostics);
   const sorted = [...diagnostics].sort((a, b) => new Date(b.visit_at).getTime() - new Date(a.visit_at).getTime());
   const openDeals = opportunities.filter((item) => !item.is_draft && !["Ganho", "Perdido"].includes(item.stage));
   const next = tasks.filter(isPendingTask).sort((a, b) => new Date(a.due_at).getTime() - new Date(b.due_at).getTime())[0];
-  const primaryContact = contacts.find((item) => item.id === current?.contact_id) || contacts[0];
+  const primaryContact = contacts.find((item) => item.id === contactId) || contacts[0];
   const lastContact = latestDate([current?.visit_at, ...interactions.map((item) => item.occurred_at), ...tasks.filter((item) => item.status === "Concluída").map((item) => item.completed_at)]);
   const linkedMeetings = new Set(diagnostics.map((item) => item.business_details.source_meeting_id).filter(Boolean));
   const withoutMinutes = tasks.filter((item) => item.kind === "Reunião" && !item.archived_at && item.meeting_status !== "Cancelada" && item.status !== "Cancelada" && !linkedMeetings.has(item.id));
@@ -56,11 +56,11 @@ export function CompanyProfile({ company, contacts, diagnostics, opportunities, 
 
   return <div className="min-w-0 space-y-6">
     <div className="rounded-2xl bg-[#173052] p-5 text-white sm:p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3"><span className="rounded-full bg-white/10 px-3 py-1 text-xs text-[#eadbb9]">{current?.relationship_status || "Relacionamento a definir"}</span><span className="text-xs text-white/70">Potencial {current?.potential?.toLowerCase() || "a avaliar"}</span></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><span className="rounded-full bg-white/10 px-3 py-1 text-xs text-[#eadbb9]">{current?.relationship_status || "Relacionamento a definir"}</span><span className="text-xs text-white/70">Potencial {potential?.toLowerCase() || "a avaliar"}</span></div>
       <p className="mt-4 flex items-center gap-2 text-sm text-white/70"><Building2 className="size-4 shrink-0" />{company.segment || details.segment || "Segmento a informar"}{company.city ? " · " + company.city : ""}</p>
       <div className="mt-5 grid gap-4 sm:grid-cols-3">
         <div><p className="text-xs text-white/60">Contato principal</p><p className="mt-1 font-medium">{primaryContact?.name || "A definir"}</p>{primaryContact?.title && <p className="mt-1 text-xs text-white/70">{primaryContact.title}</p>}</div>
-        <div><p className="text-xs text-white/60">Responsável</p><p className="mt-1 font-medium">{current?.responsible || primaryContact?.assigned_to || "A definir"}</p></div>
+        <div><p className="text-xs text-white/60">Responsável</p><p className="mt-1 font-medium">{responsible || primaryContact?.assigned_to || "A definir"}</p></div>
         <div><p className="text-xs text-white/60">Última interação</p><p className="mt-1 font-medium">{lastContact ? formatDate(lastContact) : "Ainda não registrada"}</p></div>
       </div>
     </div>

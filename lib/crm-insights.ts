@@ -21,6 +21,9 @@ export function companyKnowledge(diagnostics: CompanyDiagnostic[]) {
   }
   return {
     current: completed[0], details,
+    potential: completed.find((item) => item.potential)?.potential,
+    responsible: completed.find((item) => item.responsible)?.responsible,
+    contactId: completed.find((item) => item.contact_id)?.contact_id,
     painsSource: completed.find((item) => item.pains.length),
     desiresSource: completed.find((item) => item.desires.length),
     ideas: completed.flatMap((meeting) => meeting.ideas.map((idea) => ({ meeting, idea }))),
