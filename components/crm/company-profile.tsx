@@ -7,9 +7,17 @@ import { Button } from "@/components/ui/button";
 import type { Company, CompanyDiagnostic, Contact, DiagnosticIdea, Interaction, Opportunity, Task } from "@/lib/crm-types";
 import { currency, formatDate, safeExternalUrl, taskIsLate } from "@/lib/crm-utils";
 import { companyKnowledge, isPendingTask, latestDate } from "@/lib/crm-insights";
+import { RichTextContent } from "@/components/crm/rich-text-editor";
+import { parseActionPlan } from "@/lib/action-plan";
 
 const tabs = [["overview", "Visão geral"], ["history", "Histórico"], ["opportunities", "Oportunidades"], ["meetings", "Reuniões e atas"], ["connections", "Conexões"], ["data", "Dados da empresa"]] as const;
 const businessLabels: Record<string, string> = { contact_title: "Cargo do contato", history: "História e operação", years: "Tempo de mercado", region: "Região", segment: "Segmento", products: "Produtos e serviços", audience: "Público", model: "Modelo de negócio", differentials: "Diferenciais", acquisition: "Aquisição de clientes", sales: "Operação comercial", channels: "Canais", size: "Porte", digital: "Presença digital", employees: "Equipe", other: "Outros detalhes" };
+
+function MeetingActionPlan({ value }: { value?: string }) {
+  const actions = parseActionPlan(value);
+  if (!actions.length) return null;
+  return <details className="mt-4 rounded-xl border border-slate-200 p-3 text-sm"><summary className="cursor-pointer font-medium text-[#173052]">Plano de ação · {actions.length} ações</summary><div className="mt-3 space-y-2">{actions.map((action, index) => <div key={index} className="rounded-lg bg-slate-50 p-3"><div className="flex flex-wrap items-start justify-between gap-2"><p className="font-medium text-slate-700">{action.title}</p><Badge variant="secondary">{action.status}</Badge></div><p className="mt-1 text-xs text-slate-500">{action.owner || "Responsável a definir"}{action.due_date ? ` · ${formatDate(action.due_date)}` : " · Prazo a definir"} · {action.basis}</p></div>)}</div></details>;
+}
 
 export function CompanyProfile({ company, contacts, diagnostics, opportunities, tasks, interactions, canEdit,
   onRegister, onEditDiagnostic, onArchiveDiagnostic, onCreateOpportunity, onNewOpportunity, onOpportunityDetail, onAddTask, onAddInteraction, onEditCompany, onOpenAttachment }: {
@@ -97,9 +105,10 @@ export function CompanyProfile({ company, contacts, diagnostics, opportunities, 
         {withoutMinutes.length > 0 && <section className="crm-card bg-[#faf6ed]"><h3 className="mb-3 font-semibold">Reuniões sem ata</h3>{withoutMinutes.map((meeting) => <div key={meeting.id} className="flex flex-wrap items-center justify-between gap-3 py-3"><div><p className="text-sm font-medium">{meeting.title}</p><p className="mt-1 text-xs text-slate-500">{formatDate(meeting.due_at, true)}</p></div>{editable && <Button size="sm" variant="outline" onClick={() => onRegister(meeting)}>Adicionar ata</Button>}</div>)}</section>}
         {sorted.length ? sorted.map((item) => <article key={item.id} className="crm-card">
           <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-medium uppercase tracking-wide text-[#806738]">{formatDate(item.visit_at, item.business_details.visit_time_known !== "false")}</p><h3 className="mt-2 font-semibold text-[#173052]">{item.business_details.source_meeting_title || item.visit_kind}</h3></div><Badge variant="secondary">{item.status === "draft" ? "Rascunho" : item.status === "archived" ? "Arquivada" : "Ata salva"}</Badge></div>
-          <p className="mt-4 whitespace-pre-wrap break-words text-sm leading-7 text-slate-600">{item.summary || "Resumo ainda não preenchido."}</p>
+          <RichTextContent html={item.business_details.summary_html} text={item.summary || "Resumo ainda não preenchido."} className="mt-4 text-sm leading-7 text-slate-600" />
           {item.next_action && <div className="mt-4 rounded-xl bg-[#faf6ed] p-3"><p className="text-xs font-semibold text-[#806738]">Próximo passo registrado</p><p className="mt-1 text-sm">{item.next_action}</p>{item.next_due_at && <p className="mt-1 text-xs text-slate-500">{formatDate(item.next_due_at, true)}</p>}</div>}
-          {item.business_details.raw_notes && <details className="mt-4 text-sm"><summary className="cursor-pointer text-slate-500">Texto original da reunião</summary><p className="mt-3 whitespace-pre-wrap break-words leading-6 text-slate-600">{item.business_details.raw_notes}</p></details>}
+          <MeetingActionPlan value={item.business_details.action_plan} />
+          {item.business_details.raw_notes && <details className="mt-4 text-sm"><summary className="cursor-pointer text-slate-500">Ata completa da reunião</summary><RichTextContent html={item.business_details.raw_notes_html} text={item.business_details.raw_notes} className="mt-3 leading-6 text-slate-600" /></details>}
           <div className="mt-4 flex flex-wrap gap-2">{item.business_details.attachment_path && <Button variant="outline" size="sm" onClick={() => onOpenAttachment(item.business_details.attachment_path)}><FileText className="size-4" /> Abrir ata original</Button>}{editable && <Button variant="ghost" size="sm" onClick={() => onEditDiagnostic(item)}>Editar ata</Button>}{editable && item.status === "completed" && <Button variant="ghost" size="sm" onClick={() => onArchiveDiagnostic(item)}>Arquivar</Button>}</div>
         </article>) : <section className="crm-card py-10 text-center"><FileText className="mx-auto size-8 text-[#b79558]" /><h3 className="mt-4 font-semibold">A primeira reunião começa este histórico</h3><p className="mt-2 text-sm text-slate-500">Use “Registrar reunião” para anexar uma ata ou escrever um resumo.</p></section>}
       </>}

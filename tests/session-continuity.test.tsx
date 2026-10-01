@@ -35,10 +35,10 @@ it("keeps the open meeting and its text when the same user's session is refreshe
   await screen.findByRole("heading", { name: "Seu foco hoje" });
   const user = userEvent.setup();
   await user.click(screen.getAllByRole("button", { name: /^Registrar reunião$/ })[0]);
-  await user.type(screen.getByLabelText("Texto ou transcrição (opcional)"), "Texto preservado ao voltar ao aplicativo.");
+  await user.type(screen.getByLabelText("Ata, transcrição ou anotações (opcional)"), "Texto preservado ao voltar ao aplicativo.");
   const originalLoads = backend.fetchData.mock.calls.length;
   await act(async () => backend.listener?.("TOKEN_REFRESHED", { ...backend.session, access_token: "synthetic-new-token", user: { ...backend.session.user } }));
   await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
-  expect((screen.getByLabelText("Texto ou transcrição (opcional)") as HTMLTextAreaElement).value).toBe("Texto preservado ao voltar ao aplicativo.");
+  expect(screen.getByLabelText("Ata, transcrição ou anotações (opcional)").textContent).toBe("Texto preservado ao voltar ao aplicativo.");
   expect(backend.fetchData.mock.calls.length).toBe(originalLoads);
 });

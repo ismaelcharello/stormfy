@@ -12,7 +12,7 @@ export const meetingDraftSchema = z.object({
     next_action: text, next_kind: text, next_due_at: text, next_assigned_to: text,
     next_priority: text, next_notes: text, schedule_task: z.boolean(),
   }),
-  rawNotes: text, pasteMode: z.boolean(), savedAt: text, fileName: text.optional(),
+  rawNotes: text, rawNotesHtml: text.optional(), summaryHtml: text.optional(), pasteMode: z.boolean(), savedAt: text, fileName: text.optional(),
 });
 
 export type MeetingDraft = z.infer<typeof meetingDraftSchema>;

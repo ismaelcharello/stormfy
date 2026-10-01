@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
 import { Field } from "@/components/crm/field";
+import { RichTextEditor, plainTextToRichHtml, sanitizeRichHtml } from "@/components/crm/rich-text-editor";
+import { emptyMeetingAction, parseActionPlan, serializeActionPlan, type MeetingAction } from "@/lib/action-plan";
 import { meetingDraftKey, pendingMeetingFiles, readMeetingDraft } from "@/lib/meeting-draft";
 import { stages, type Company, type CompanyDiagnostic, type Contact, type DiagnosticIdea, type DiagnosticPain, type Task } from "@/lib/crm-types";
 
@@ -35,6 +37,15 @@ function localDateTime(value?: string | null) {
   const date = value ? new Date(value) : new Date();
   if (Number.isNaN(date.getTime())) return "";
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0,16);
+}
+
+function conciseSummary(value: string) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 700) return normalized;
+  const sentences = normalized.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [normalized];
+  const selected = sentences.slice(0, 3).join(" ").trim();
+  const candidate = selected.length >= 120 ? selected : normalized.slice(0, 700);
+  return candidate.length > 700 ? candidate.slice(0, 697).replace(/\s+\S*$/, "") + "..." : candidate;
 }
 
 export function emptyDiagnostic(companyId = "", contactId = "", responsible = ""): DiagnosticForm {
@@ -79,6 +90,10 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
   const [recordId, setRecordId] = useState(initial?.id);
   const [pasteMode, setPasteMode] = useState(!initial);
   const [rawNotes, setRawNotes] = useState(initial?.business_details.raw_notes || "");
+  const [rawNotesHtml, setRawNotesHtml] = useState(initial?.business_details.raw_notes_html || plainTextToRichHtml(initial?.business_details.raw_notes || ""));
+  const [summaryHtml, setSummaryHtml] = useState(initial?.business_details.summary_html || plainTextToRichHtml(initial?.summary || ""));
+  const [actionPlan, setActionPlan] = useState<MeetingAction[]>(() => parseActionPlan(initial?.business_details.action_plan));
+  const [showAllBusiness, setShowAllBusiness] = useState(false);
   const [pdf, setPdf] = useState<File | null>(() => pendingMeetingFiles.get(draftStorageKey) || null);
   const [missingFile, setMissingFile] = useState("");
   const [storageError, setStorageError] = useState(false);
@@ -103,7 +118,7 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
       if (draft) {
         // Hydrate browser-only draft data after mount, keeping SSR deterministic.
         // eslint-disable-next-line react-hooks/set-state-in-effect
-        setForm(draft.form); setRawNotes(draft.rawNotes); setPasteMode(draft.pasteMode);
+        setForm(draft.form); setRawNotes(draft.rawNotes); setRawNotesHtml(draft.rawNotesHtml || plainTextToRichHtml(draft.rawNotes)); setSummaryHtml(draft.summaryHtml || plainTextToRichHtml(draft.form.summary)); setActionPlan(parseActionPlan(draft.form.business_details.action_plan)); setPasteMode(draft.pasteMode);
         setDirty(true); setRecoveredDraft(true);
         if (draft.fileName && !pendingMeetingFiles.has(draftStorageKey)) setMissingFile(draft.fileName);
       }
@@ -113,12 +128,12 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
   useEffect(() => {
     if (!draftReady || !dirty) return;
     try {
-      window.localStorage.setItem(draftStorageKey, JSON.stringify({ form, rawNotes, pasteMode, fileName: pdf?.name || missingFile, savedAt: new Date().toISOString() }));
+      window.localStorage.setItem(draftStorageKey, JSON.stringify({ form, rawNotes, rawNotesHtml, summaryHtml, pasteMode, fileName: pdf?.name || missingFile, savedAt: new Date().toISOString() }));
       // Reflect the result of writing to the external browser store.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setStorageError(false);
     } catch { setStorageError(true); }
-  }, [draftReady, dirty, form, rawNotes, pasteMode, pdf, missingFile, draftStorageKey]);
+  }, [draftReady, dirty, form, rawNotes, rawNotesHtml, summaryHtml, pasteMode, pdf, missingFile, draftStorageKey]);
   useEffect(() => {
     if (pdf) pendingMeetingFiles.set(draftStorageKey, pdf);
     else pendingMeetingFiles.delete(draftStorageKey);
@@ -147,7 +162,7 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
     }
     setBusy(true); setError("");
     try {
-      const id = await onSave({ ...form, status, business_details: { ...form.business_details, raw_notes: rawNotes.trim() }, ideas: form.ideas.filter((idea) => idea.title.trim()) }, recordId, pdf);
+      const id = await onSave({ ...form, status, business_details: { ...form.business_details, raw_notes: rawNotes.trim(), raw_notes_html: sanitizeRichHtml(rawNotesHtml), summary_html: sanitizeRichHtml(summaryHtml), action_plan: serializeActionPlan(actionPlan) }, ideas: form.ideas.filter((idea) => idea.title.trim()) }, recordId, pdf);
       if (id) {
         setDirty(false); setRecordId(id); pendingMeetingFiles.delete(draftStorageKey);
         try { window.localStorage.removeItem(draftStorageKey); } catch { /* Saved on the server; storage cleanup must not report failure. */ }
@@ -173,7 +188,7 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
     if (/\.(txt|md)$/i.test(file.name) && file.size <= 100000) {
       const content = await file.text();
       if (content.length > 20000) { setError("O texto deve ter até 20 mil caracteres."); return; }
-      setPdf(null); setMissingFile(""); setRawNotes(content); setDirty(true); return;
+      setPdf(null); setMissingFile(""); setRawNotes(content); setRawNotesHtml(plainTextToRichHtml(content)); setDirty(true); return;
     }
     setError("Escolha um arquivo PDF, TXT ou MD válido.");
   };
@@ -194,11 +209,16 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
       const result = await response.json() as { draft?: Partial<DiagnosticForm>; error?: string };
       if (!response.ok || !result.draft) throw new Error(result.error || "Não foi possível organizar o relato agora.");
       const draft = result.draft;
-      setForm((current) => ({ ...current, summary: draft.summary || rawNotes.trim(), business_details: { ...current.business_details, ...draft.business_details }, pains: draft.pains || [], desires: draft.desires || [], ideas: draft.ideas || [], next_action: draft.next_action || "", next_kind: draft.next_kind || current.next_kind, next_due_at: draft.next_due_at || "", next_notes: draft.next_notes || "", schedule_task: Boolean(draft.schedule_task), relationship_status: draft.relationship_status || current.relationship_status }));
+      const nextSummary = draft.summary || rawNotes.trim();
+      setForm((current) => ({ ...current, summary: nextSummary, business_details: { ...current.business_details, ...draft.business_details }, pains: draft.pains || [], desires: draft.desires || [], ideas: draft.ideas || [], next_action: draft.next_action || "", next_kind: draft.next_kind || current.next_kind, next_due_at: draft.next_due_at || "", next_notes: draft.next_notes || "", schedule_task: Boolean(draft.schedule_task), relationship_status: draft.relationship_status || current.relationship_status }));
+      setSummaryHtml(plainTextToRichHtml(nextSummary));
+      setActionPlan(parseActionPlan(draft.business_details?.action_plan));
       setDirty(true); setAiReviewed(true); setPasteMode(false);
     } catch (cause) {
       setError((cause instanceof Error ? cause.message : "A análise não está disponível agora.") + " Você pode salvar o resumo e continuar; os detalhes são opcionais.");
-      setForm((current) => ({ ...current, summary: current.summary || rawNotes.trim() }));
+      const fallbackSummary = conciseSummary(rawNotes);
+      setForm((current) => ({ ...current, summary: current.summary || fallbackSummary }));
+      setSummaryHtml((current) => current || plainTextToRichHtml(fallbackSummary));
       setDirty(true); setPasteMode(false);
     }
     finally { setBusy(false); }
@@ -209,9 +229,15 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
     if (!form.visit_at) { setError("Informe a data da reunião."); return; }
     if (missingFile) { setError("Reanexe o arquivo ou escolha continuar sem ele."); return; }
     if (useAi && aiEnabled && (pdf || rawNotes.trim().length >= 30)) { void organizeNotes(); return; }
-    change({ summary: form.summary || rawNotes.trim() });
+    if (!form.summary) {
+      const fallbackSummary = conciseSummary(rawNotes);
+      change({ summary: fallbackSummary });
+      setSummaryHtml(plainTextToRichHtml(fallbackSummary));
+    }
     setPasteMode(false);
   };
+  const editAction = (index: number, partial: Partial<MeetingAction>) => { setActionPlan((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...partial } : item)); setDirty(true); };
+  const visibleBusinessFields = showAllBusiness ? businessFields : businessFields.filter(([key]) => form.business_details[key]?.trim());
   return <Dialog open onOpenChange={(open) => { if (!open) close(); }}>
     <DialogContent className="!flex !flex-col !gap-0 !overflow-hidden !p-0 sm:!max-w-3xl" onPointerDownOutside={(event) => event.preventDefault()}>
       <DialogHeader className="shrink-0 border-b border-[#eee9df] px-5 pb-4 pt-6 text-left sm:px-7">
@@ -220,7 +246,7 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
         <DialogDescription>{pasteMode ? "Escolha a empresa e traga o que foi conversado." : "Revise o essencial. Os detalhes podem ficar para depois."}</DialogDescription>
         <ol className="mt-3 flex gap-5 text-xs font-medium" aria-label="Etapas do registro">
           <li aria-current={pasteMode ? "step" : undefined} className={pasteMode ? "text-[#173052]" : "text-slate-400"}>01 · Empresa e ata</li>
-          <li aria-current={!pasteMode ? "step" : undefined} className={!pasteMode ? "text-[#173052]" : "text-slate-400"}>02 · Resumo e próximo passo</li>
+          <li aria-current={!pasteMode ? "step" : undefined} className={!pasteMode ? "text-[#173052]" : "text-slate-400"}>02 · Síntese e plano de ação</li>
         </ol>
       </DialogHeader>
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-5 py-5 sm:px-7">
@@ -248,28 +274,45 @@ export function CompanyDiagnosticEditor({ initial, meeting, companyId, contactId
           </div>
 
           {initial?.business_details.attachment_name && !pdf && <p className="text-xs text-slate-500">Ata já salva: {initial.business_details.attachment_name}. Um novo PDF substituirá o anexo desta reunião.</p>}
-          <Field label="Texto ou transcrição (opcional)"><Textarea disabled={busy} rows={5} maxLength={20000} value={rawNotes} onChange={(event) => { setRawNotes(event.target.value); setDirty(true); }} placeholder="Cole a ata, transcrição ou suas anotações. Você também pode continuar e escrever só um resumo." /></Field>
+          <RichTextEditor label="Ata, transcrição ou anotações (opcional)" disabled={busy} maxLength={20000} valueHtml={rawNotesHtml} valueText={rawNotes}
+            onChange={({ html, text }) => { setRawNotesHtml(html); setRawNotes(text); setDirty(true); }}
+            placeholder="Cole aqui a ata completa. Você também pode anexar um arquivo e continuar." />
           {aiEnabled ? <label className="flex items-start gap-3 rounded-xl bg-[#f8f5ed] p-4 text-sm"><input type="checkbox" className="mt-0.5 size-4 accent-[#173052]" checked={useAi} disabled={busy} onChange={(event) => setUseAi(event.target.checked)} /><span><strong className="flex items-center gap-2 text-[#173052]"><Sparkles className="size-4" /> Preencher com IA ao continuar</strong><span className="mt-1 block leading-6 text-slate-500">A ata vira um resumo, dores, desejos e sugestões de próximos passos. Tudo fica editável.</span></span></label> : <p className="text-sm leading-6 text-slate-500">A análise automática está indisponível. Continue com um resumo e, se houver, o próximo passo. O PDF será anexado ao salvar.</p>}
         </div> : <div className="space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[#f4f1e9] p-3"><div className="min-w-0"><p className="font-medium text-[#173052]">{companies.find((item) => item.id === form.company_id)?.name}</p><p className="mt-1 text-xs text-slate-500">{form.visit_at.slice(0,10).split("-").reverse().join("/")}{pdf ? " · " + pdf.name : ""}</p></div><Button variant="ghost" size="sm" onClick={() => setPasteMode(true)}>Alterar</Button></div>
           {aiReviewed && <p role="status" className="rounded-xl bg-[#edf3f8] p-3 text-sm leading-6 text-[#173052]"><Sparkles className="mr-1 inline size-4" /> Preenchido pela IA. Confira os dados e as sugestões antes de salvar. Oportunidades sugeridas ainda não foram criadas no funil.</p>}
-          <Field label="Resumo da conversa *"><Textarea rows={5} value={form.summary} onChange={(event) => change({ summary: event.target.value })} placeholder="O que foi conversado e combinado?" /></Field>
+          <div className="rounded-2xl border border-[#e8e1d4] bg-white p-4 sm:p-5">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-[.14em] text-[#947845]">Síntese estratégica</p>
+            <RichTextEditor label="O essencial da conversa *" valueHtml={summaryHtml} valueText={form.summary}
+              onChange={({ html, text }) => { setSummaryHtml(html); change({ summary: text }); }}
+              placeholder="Em poucas linhas: contexto, decisão e impacto para o relacionamento." maxLength={5000} />
+          </div>
           <section className="space-y-4 rounded-2xl bg-[#f5eddd] p-4 sm:p-5">
-            <h3 className="font-semibold text-[#173052]">Próximo passo</h3>
-            <Field label="O que fazer depois? (opcional)"><Textarea rows={2} value={form.next_action} onChange={(event) => change({ next_action: event.target.value })} placeholder="Ex.: Apresentar dois parceiros estratégicos" /></Field>
-            <Field label="Quando fazer o follow-up? (opcional)"><Input type="datetime-local" value={form.next_due_at} onChange={(event) => change({ next_due_at: event.target.value, schedule_task: Boolean(event.target.value) })} /></Field>
+            <div><h3 className="font-semibold text-[#173052]">Plano de ação</h3><p className="mt-1 text-sm text-[#6d624e]">Registre o que precisa acontecer. A primeira ação abaixo pode virar um follow-up no CRM.</p></div>
+            <Field label="Próxima ação prioritária"><Textarea rows={2} value={form.next_action} onChange={(event) => change({ next_action: event.target.value })} placeholder="Ex.: Apresentar dois parceiros estratégicos" /></Field>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Responsável"><Input value={form.next_assigned_to} onChange={(event) => change({ next_assigned_to: event.target.value })} placeholder="Quem fará?" /></Field>
+              <Field label="Prazo / follow-up"><Input type="datetime-local" value={form.next_due_at} onChange={(event) => change({ next_due_at: event.target.value, schedule_task: Boolean(event.target.value) })} /></Field>
+            </div>
             {form.next_notes && <p className="text-xs leading-5 text-[#806738]">{form.next_notes}</p>}
             <label className="flex items-start gap-2 text-sm text-[#173052]"><input type="checkbox" className="mt-0.5 size-4 accent-[#173052]" checked={form.schedule_task} onChange={(event) => change({ schedule_task: event.target.checked })} /><span>Agendar este follow-up ao salvar a reunião</span></label>
-            <details><summary className="cursor-pointer text-sm text-[#806738]">Responsável, tipo e prioridade</summary><div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <Field label="Responsável pelo follow-up"><Input value={form.next_assigned_to} onChange={(event) => change({ next_assigned_to: event.target.value })} /></Field>
+            {actionPlan.length > 0 && <div className="space-y-3 border-t border-[#ddcfb2] pt-4"><p className="text-sm font-semibold text-[#173052]">Outras ações do plano</p>{actionPlan.map((action, index) => <div key={index} className="rounded-xl bg-white/80 p-3">
+              <div className="flex items-center gap-2"><Input aria-label={`Ação ${index + 1}`} value={action.title} onChange={(event) => editAction(index, { title: event.target.value })} placeholder="Ação objetiva" /><Button type="button" size="icon-sm" variant="ghost" aria-label={`Remover ação ${index + 1}`} onClick={() => { setActionPlan((current) => current.filter((_, itemIndex) => itemIndex !== index)); setDirty(true); }}><Trash2 className="size-4" /></Button></div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2"><Field label="Responsável"><Input value={action.owner} onChange={(event) => editAction(index, { owner: event.target.value })} placeholder="A definir" /></Field><Field label="Prazo"><Input type="date" value={action.due_date} onChange={(event) => editAction(index, { due_date: event.target.value })} /></Field><Field label="Status"><NativeSelect value={action.status} onChange={(event) => editAction(index, { status: event.target.value as MeetingAction["status"] })}><option>A fazer</option><option>Em andamento</option><option>Concluída</option></NativeSelect></Field><Field label="Origem"><NativeSelect value={action.basis} onChange={(event) => editAction(index, { basis: event.target.value as MeetingAction["basis"] })}><option>Combinado</option><option>Sugestão</option></NativeSelect></Field></div>
+            </div>)}</div>}
+            <Button type="button" variant="outline" className="bg-white/70" onClick={() => { setActionPlan((current) => [...current, emptyMeetingAction()]); setDirty(true); }}><Plus className="size-4" /> Adicionar outra ação</Button>
+            <details><summary className="cursor-pointer text-sm text-[#806738]">Tipo, prioridade e observações</summary><div className="mt-3 grid gap-3 sm:grid-cols-2">
               <Field label="Tipo do próximo contato"><NativeSelect value={form.next_kind} onChange={(event) => change({ next_kind: event.target.value })}>{nextKinds.map((kind) => <option key={kind}>{kind}</option>)}</NativeSelect></Field>
               <Field label="Prioridade do follow-up"><NativeSelect value={form.next_priority} onChange={(event) => change({ next_priority: event.target.value })}>{["Baixa","Média","Alta"].map((value) => <option key={value}>{value}</option>)}</NativeSelect></Field>
               <Field label="Observações do follow-up"><Textarea value={form.next_notes} onChange={(event) => change({ next_notes: event.target.value })} /></Field>
             </div></details>
           </section>
-          <p className="text-xs text-slate-500">Os campos abaixo são opcionais. Abra somente o que quiser revisar.</p>
-        <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer font-semibold text-[#173052]">Detalhes da empresa · opcional</summary><div className="mt-4 grid gap-4 sm:grid-cols-2">{businessFields.map(([key,label]) => <Field key={key} label={label}><Textarea rows={key === "history" || key === "sales" ? 3 : 2} value={form.business_details[key] || ""} onChange={(event) => changeBusiness(key,event.target.value)} placeholder="Registre apenas o que foi informado" /></Field>)}</div></details>
-        <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer font-semibold text-[#173052]">Dores, desejos e oportunidades · opcional</summary><div className="mt-4 space-y-6">
+          <p className="text-xs text-slate-500">A inteligência abaixo não bloqueia o salvamento. Revise somente quando precisar; a IA preenche o que encontrar na ata.</p>
+        <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer font-semibold text-[#173052]">Inteligência da empresa <span className="ml-1 font-normal text-slate-500">· {businessFields.filter(([key]) => form.business_details[key]?.trim()).length} de {businessFields.length} pontos identificados</span></summary><div className="mt-4">
+          {visibleBusinessFields.length ? <div className="grid gap-4 sm:grid-cols-2">{visibleBusinessFields.map(([key,label]) => <Field key={key} label={label}><Textarea rows={key === "history" || key === "sales" ? 3 : 2} value={form.business_details[key] || ""} onChange={(event) => changeBusiness(key,event.target.value)} placeholder="Registre apenas o que foi informado" /></Field>)}</div> : <p className="text-sm text-slate-500">Nenhum detalhe identificado ainda. Você pode salvar a reunião assim mesmo.</p>}
+          <Button type="button" variant="ghost" size="sm" className="mt-3" onClick={() => setShowAllBusiness((value) => !value)}>{showAllBusiness ? "Ocultar campos vazios" : "Revisar todos os campos"}</Button>
+        </div></details>
+        <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer font-semibold text-[#173052]">Dores, desejos e oportunidades <span className="ml-1 font-normal text-slate-500">· {form.pains.length} dores · {form.desires.length} desejos · {form.ideas.length} oportunidades</span></summary><div className="mt-4 space-y-6">
         <section className="space-y-3"><h3 className="text-base font-semibold text-[#173052]">Principais dores</h3><p className="text-sm text-slate-600">O que a empresa relatou como problema? Ajuste a prioridade.</p>
           {form.pains.map((pain,index) => <div key={index} className="grid gap-2 rounded-lg border border-slate-200 p-3 sm:grid-cols-[1fr_145px_auto]"><Field label={`Dor ${index + 1}`}><Input value={pain.text} onChange={(event) => editPain(index,{ text: event.target.value })} placeholder="Ex.: Ampliar a visibilidade em Curitiba" /></Field><Field label="Prioridade"><NativeSelect value={pain.priority} onChange={(event) => editPain(index,{ priority: event.target.value as DiagnosticPain["priority"] })}>{["Baixa","Média","Alta"].map((p) => <option key={p}>{p}</option>)}</NativeSelect></Field><Button type="button" size="icon" variant="ghost" className="self-end" aria-label={`Remover dor ${index + 1}`} onClick={() => change({ pains: form.pains.filter((_,i) => i !== index) })}><Trash2 className="size-4" /></Button></div>)}
           <Button type="button" variant="outline" onClick={() => change({ pains: [...form.pains,{ text: "", priority: "Média" }] })}><Plus className="size-4" /> Adicionar dor</Button>
